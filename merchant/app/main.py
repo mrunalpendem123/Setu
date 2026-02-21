@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any
 from uuid import uuid4
@@ -62,12 +63,17 @@ FULFILLMENT_OPTION_TEMPLATES = [
 SUPPORTED_PAYMENT_METHODS = ["card", "upi"]
 
 
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logger = logging.getLogger("merchant")
+
 app = FastAPI(title="Merchant API", version="1.0.0")
 
 
 @app.on_event("startup")
 def _startup() -> None:
     init_db()
+    logger.info("merchant_startup")
 
 
 @app.exception_handler(HTTPException)

@@ -1,0 +1,2 @@
+CREATE DATABASE indus;
+CREATE DATABASE merchant;

@@ -29,6 +29,7 @@ It uses Postgres persistence.
 - `POST /indus/payments/{id}/eligibility`
 - `POST /indus/payment_method_sessions`
 - `POST /indus/api_keys/{merchant_id}`
+- `POST /indus/sarvam/proxy`
 - `POST /webhooks/orders`
 
 Checkout status flow mirrors OpenAI Commerce:
@@ -39,6 +40,7 @@ Checkout status flow mirrors OpenAI Commerce:
 
 - `DATABASE_URL` (Postgres)
 - `INDUS_API_KEY` (token for merchant; optional)
+- `LOG_LEVEL` (default `INFO`)
 
 Hyperswitch:
 
@@ -53,6 +55,20 @@ Hyperswitch:
 - `HYPERSWITCH_TIMEOUT_SECONDS` (default `20`)
 - `HYPERSWITCH_MAX_RETRIES` (default `3`)
 - `HYPERSWITCH_RETRY_BACKOFF_MS` (default `200`)
+
+Webhooks:
+
+- `ORDER_WEBHOOK_SECRET` (optional; verify Merchant-Signature)
+
+Sarvam (optional):
+
+- `SARVAM_BASE_URL`
+- `SARVAM_API_KEY`
+- `SARVAM_API_KEY_HEADER` (default `api-subscription-key`)
+- `SARVAM_PROXY_PATH`
+- `SARVAM_TIMEOUT_SECONDS` (default `20`)
+- `SARVAM_MAX_RETRIES` (default `2`)
+- `SARVAM_RETRY_BACKOFF_MS` (default `200`)
 
 ## Run
 

@@ -7,6 +7,7 @@ It includes:
 - **Indus Orchestrator** (client-facing API)
 - **Merchant API** (partner merchant MoR)
 - **Hyperswitch integration** (payments create/confirm/verify + full payment API pass‑through)
+- **Sarvam proxy integration** (optional, via configured endpoint)
 - **Product Feed** (JSON/CSV)
 - **Postgres persistence**
 - **Idempotency** support
@@ -99,6 +100,7 @@ See `indus/README.md` for the full list of endpoints.
 ### Common
 
 - `DATABASE_URL` – Postgres connection string
+- `LOG_LEVEL` (default `INFO`)
 
 ### Indus Orchestrator
 
@@ -153,6 +155,23 @@ Webhooks:
 - `ORDER_WEBHOOK_URL` (optional)
 - `ORDER_WEBHOOK_SECRET` (optional)
 - `ORDER_EVENT_STYLE` (dot/underscore; default `dot`)
+- `ORDER_WEBHOOK_TIMEOUT_SECONDS` (default `5`)
+- `ORDER_WEBHOOK_MAX_RETRIES` (default `3`)
+- `ORDER_WEBHOOK_RETRY_BACKOFF_MS` (default `200`)
+
+Idempotency:
+
+- `IDEMPOTENCY_TTL_SECONDS` (default `86400`)
+
+Sarvam (optional):
+
+- `SARVAM_BASE_URL`
+- `SARVAM_API_KEY`
+- `SARVAM_API_KEY_HEADER` (default `api-subscription-key`)
+- `SARVAM_PROXY_PATH`
+- `SARVAM_TIMEOUT_SECONDS` (default `20`)
+- `SARVAM_MAX_RETRIES` (default `2`)
+- `SARVAM_RETRY_BACKOFF_MS` (default `200`)
 
 ---
 
@@ -192,6 +211,18 @@ export HYPERSWITCH_ADMIN_API_KEY=your_admin_key
 export HYPERSWITCH_VAULT_API_KEY=your_vault_key
 uvicorn app.main:app --reload --port 8000
 ```
+
+## Quick Start (Docker)
+
+```bash
+export HYPERSWITCH_API_KEY=your_key
+export HYPERSWITCH_PUBLISHABLE_KEY=your_publishable_key
+export HYPERSWITCH_ADMIN_API_KEY=your_admin_key
+export HYPERSWITCH_VAULT_API_KEY=your_vault_key
+docker compose up --build
+```
+
+Indus will be on `http://localhost:8000` and Merchant on `http://localhost:8001`.
 
 ---
 
@@ -251,6 +282,18 @@ curl -s -X POST http://localhost:8000/indus/checkout/<SESSION_ID>/complete \
       "provider": "hyperswitch",
       "token": "<PAYMENT_ID>"
     }
+  }'
+```
+
+### Sarvam proxy (optional)
+
+Set `SARVAM_BASE_URL`, `SARVAM_API_KEY`, and `SARVAM_PROXY_PATH`, then:
+
+```bash
+curl -s -X POST http://localhost:8000/indus/sarvam/proxy \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "input": "Find me a suitcase under 10k"
   }'
 ```
 

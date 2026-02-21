@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+import os
+import logging
 
 from typing import Dict, Any
+
+import base64
+import hashlib
+import hmac
 
 from fastapi import FastAPI, HTTPException, Request, Body
 from fastapi.encoders import jsonable_encoder
@@ -18,8 +24,13 @@ from .models import (
 )
 from .merchant_client import MerchantClient
 from .hyperswitch import HyperswitchClient, HyperswitchAPIError
+from .sarvam_client import SarvamClient, SarvamAPIError
 from .db import init_db, get_db, SessionRecord, PaymentRecord, OrderEvent
 
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logger = logging.getLogger("indus")
 
 app = FastAPI(title="Indus Orchestrator", version="1.0.0")
 
@@ -28,9 +39,31 @@ def _raise_hyperswitch_error(exc: HyperswitchAPIError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.payload)
 
 
+def _raise_sarvam_error(exc: SarvamAPIError) -> None:
+    raise HTTPException(status_code=exc.status_code, detail=exc.payload)
+
+
+def _webhook_signature(secret: str, body: bytes) -> str:
+    digest = hmac.new(secret.encode(), body, hashlib.sha256).digest()
+    return base64.b64encode(digest).decode()
+
+
+def _verify_webhook_signature(request: Request, body: bytes) -> None:
+    secret = os.getenv("ORDER_WEBHOOK_SECRET")
+    if not secret:
+        return
+    received = request.headers.get("Merchant-Signature")
+    if not received:
+        raise HTTPException(status_code=401, detail="missing_webhook_signature")
+    expected = _webhook_signature(secret, body)
+    if not hmac.compare_digest(received, expected):
+        raise HTTPException(status_code=401, detail="invalid_webhook_signature")
+
+
 @app.on_event("startup")
 def _startup() -> None:
     init_db()
+    logger.info("indus_startup")
 
 
 @app.post("/indus/checkout", response_model=IndusCheckoutResponse)
@@ -393,8 +426,20 @@ def hyperswitch_create_api_key(
         _raise_hyperswitch_error(exc)
 
 
+@app.post("/indus/sarvam/proxy")
+def sarvam_proxy(payload: Dict[str, Any]) -> Dict[str, Any]:
+    client = SarvamClient()
+    try:
+        return client.request(payload)
+    except SarvamAPIError as exc:
+        _raise_sarvam_error(exc)
+
+
 @app.post("/webhooks/orders")
-async def order_webhook(payload: dict) -> dict:
+async def order_webhook(request: Request) -> dict:
+    body = await request.body()
+    _verify_webhook_signature(request, body)
+    payload = jsonable_encoder(await request.json())
     with get_db() as db:
         db.add(OrderEvent(payload=jsonable_encoder(payload)))
         db.commit()

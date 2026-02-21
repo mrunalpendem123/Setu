@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import os
+import time
 from typing import Any, Dict
 
 import httpx
@@ -13,6 +14,18 @@ import httpx
 def _signature(secret: str, body: bytes) -> str:
     digest = hmac.new(secret.encode(), body, hashlib.sha256).digest()
     return base64.b64encode(digest).decode()
+
+
+def _timeout_seconds() -> float:
+    return float(os.getenv("ORDER_WEBHOOK_TIMEOUT_SECONDS", "5"))
+
+
+def _max_retries() -> int:
+    return int(os.getenv("ORDER_WEBHOOK_MAX_RETRIES", "3"))
+
+
+def _retry_backoff_ms() -> int:
+    return int(os.getenv("ORDER_WEBHOOK_RETRY_BACKOFF_MS", "200"))
 
 
 def _format_event_name(event_type: str) -> str:
@@ -35,5 +48,19 @@ def send_order_event(event_type: str, payload: Dict[str, Any]) -> None:
     if secret:
         headers["Merchant-Signature"] = _signature(secret, body)
 
-    with httpx.Client(timeout=5.0) as client:
-        client.post(url, content=body, headers=headers)
+    timeout = _timeout_seconds()
+    max_retries = _max_retries()
+    backoff_ms = _retry_backoff_ms()
+
+    for attempt in range(max_retries + 1):
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(url, content=body, headers=headers)
+
+        if response.status_code < 400:
+            return
+
+        if attempt >= max_retries:
+            return
+
+        sleep_seconds = (backoff_ms / 1000.0) * (2**attempt)
+        time.sleep(sleep_seconds)

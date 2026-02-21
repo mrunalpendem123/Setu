@@ -33,6 +33,7 @@ Core:
 
 - `DATABASE_URL` (Postgres)
 - `INDUS_API_KEYS` (comma-separated tokens)
+- `LOG_LEVEL` (default `INFO`)
 
 Hyperswitch:
 
@@ -71,6 +72,13 @@ Webhooks:
 - `ORDER_WEBHOOK_URL` (optional)
 - `ORDER_WEBHOOK_SECRET` (optional)
 - `ORDER_EVENT_STYLE` (dot/underscore; default `dot`)
+- `ORDER_WEBHOOK_TIMEOUT_SECONDS` (default `5`)
+- `ORDER_WEBHOOK_MAX_RETRIES` (default `3`)
+- `ORDER_WEBHOOK_RETRY_BACKOFF_MS` (default `200`)
+
+Idempotency:
+
+- `IDEMPOTENCY_TTL_SECONDS` (default `86400`)
 
 ## Run
 
