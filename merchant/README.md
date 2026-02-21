@@ -34,6 +34,9 @@ Core:
 - `DATABASE_URL` (Postgres)
 - `INDUS_API_KEYS` (comma-separated tokens)
 - `LOG_LEVEL` (default `INFO`)
+- `RATE_LIMIT_ENABLED` (default `true`)
+- `RATE_LIMIT_REQUESTS` (default `60`)
+- `RATE_LIMIT_WINDOW_SECONDS` (default `60`)
 
 Hyperswitch:
 
@@ -79,6 +82,10 @@ Webhooks:
 Idempotency:
 
 - `IDEMPOTENCY_TTL_SECONDS` (default `86400`)
+
+Audit Logging:
+
+- Writes financial events to `audit_logs` table (payment verification, order created)
 
 ## Run
 

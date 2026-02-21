@@ -58,6 +58,16 @@ class IdempotencyModel(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class AuditLogModel(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_type = Column(String, nullable=False)
+    entity_id = Column(String, nullable=False)
+    payload = Column(JSONB, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
 

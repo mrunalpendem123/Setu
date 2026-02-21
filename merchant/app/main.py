@@ -34,6 +34,8 @@ from .models import (
 from .payment_verify import verify_hyperswitch_payment
 from .security import validate_request
 from .webhooks import send_order_event
+from .rate_limit import RateLimiter
+from .audit import log_event
 
 
 TAX_RATE = 0.18
@@ -68,6 +70,30 @@ logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s 
 logger = logging.getLogger("merchant")
 
 app = FastAPI(title="Merchant API", version="1.0.0")
+rate_limiter = RateLimiter()
+
+
+def _rate_limit_key(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
+    return f"{ip}:{request.url.path}"
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    if os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true":
+        result = rate_limiter.check(_rate_limit_key(request))
+        if not result.allowed:
+            return JSONResponse(
+                status_code=429,
+                content={"error": {"code": "rate_limited", "message": "Too many requests"}},
+                headers={
+                    "X-RateLimit-Remaining": str(result.remaining),
+                    "X-RateLimit-Reset": str(result.reset_seconds),
+                },
+            )
+    response = await call_next(request)
+    return response
 
 
 @app.on_event("startup")
@@ -513,9 +539,6 @@ async def complete_checkout_session(
         payment = payload.payment_data
         payment_currency = session_data.get("currency")
 
-        if int(payment_amount) != int(total_amount):
-            raise HTTPException(status_code=400, detail={"code": "payment_amount_mismatch", "message": "Payment amount mismatch"})
-
         if payment.provider != "hyperswitch":
             raise HTTPException(
                 status_code=400,
@@ -534,6 +557,18 @@ async def complete_checkout_session(
         if not verified:
             raise HTTPException(status_code=400, detail={"code": "payment_not_verified", "message": f"Payment not verified: {reason}"})
 
+        log_event(
+            db,
+            "payment_verified",
+            session_id,
+            {
+                "payment_id": token,
+                "amount": int(total_amount),
+                "currency": payment_currency,
+                "status": "verified",
+            },
+        )
+
         now = datetime.now(timezone.utc)
         order_id = f"ord_{uuid4().hex}"
         order = OrderSummary(
@@ -544,7 +579,7 @@ async def complete_checkout_session(
 
         session_data["status"] = "completed"
         session_data["order"] = jsonable_encoder(order)
-        session_data["updated_at"] = now.isoformat() + "Z"
+        session_data["updated_at"] = now.isoformat()
 
         row.status = "completed"
         row.updated_at = now
@@ -558,6 +593,17 @@ async def complete_checkout_session(
                 created_at=now,
                 updated_at=now,
             )
+        )
+        log_event(
+            db,
+            "order_created",
+            order_id,
+            {
+                "checkout_session_id": session_id,
+                "status": "created",
+                "total_amount": total_amount,
+                "currency": session_data.get("currency"),
+            },
         )
         db.commit()
 

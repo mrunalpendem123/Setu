@@ -101,6 +101,9 @@ See `indus/README.md` for the full list of endpoints.
 
 - `DATABASE_URL` – Postgres connection string
 - `LOG_LEVEL` (default `INFO`)
+- `RATE_LIMIT_ENABLED` (default `true`)
+- `RATE_LIMIT_REQUESTS` (default `60`)
+- `RATE_LIMIT_WINDOW_SECONDS` (default `60`)
 
 ### Indus Orchestrator
 
@@ -320,6 +323,7 @@ curl -s -X POST http://localhost:8000/indus/sarvam/proxy \
 - `checkout_sessions` – merchant checkout sessions
 - `orders` – created orders
 - `idempotency_keys` – idempotency store
+- `audit_logs` – payment verification and order creation events
 
 ---
 
@@ -327,6 +331,12 @@ curl -s -X POST http://localhost:8000/indus/sarvam/proxy \
 
 - Optional internal auth between Indus and Merchant via `X-Indus-Key`.
 - Idempotency supported for POSTs when `Idempotency-Key` is supplied.
+
+## PCI / Card Data Handling
+
+- This system **does not accept or store raw card PAN**.
+- Card data should be collected by Hyperswitch/PSP‑hosted UI or SDKs.
+- You are responsible for ensuring your deployment meets PCI‑DSS scope requirements.
 
 ---
 

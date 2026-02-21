@@ -41,6 +41,9 @@ Checkout status flow mirrors OpenAI Commerce:
 - `DATABASE_URL` (Postgres)
 - `INDUS_API_KEY` (token for merchant; optional)
 - `LOG_LEVEL` (default `INFO`)
+- `RATE_LIMIT_ENABLED` (default `true`)
+- `RATE_LIMIT_REQUESTS` (default `60`)
+- `RATE_LIMIT_WINDOW_SECONDS` (default `60`)
 
 Hyperswitch:
 

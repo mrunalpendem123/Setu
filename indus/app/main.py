@@ -11,6 +11,7 @@ import hashlib
 import hmac
 
 from fastapi import FastAPI, HTTPException, Request, Body
+from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 
 from .models import (
@@ -25,6 +26,7 @@ from .models import (
 from .merchant_client import MerchantClient
 from .hyperswitch import HyperswitchClient, HyperswitchAPIError
 from .sarvam_client import SarvamClient, SarvamAPIError
+from .rate_limit import RateLimiter
 from .db import init_db, get_db, SessionRecord, PaymentRecord, OrderEvent
 
 
@@ -33,6 +35,30 @@ logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s 
 logger = logging.getLogger("indus")
 
 app = FastAPI(title="Indus Orchestrator", version="1.0.0")
+rate_limiter = RateLimiter()
+
+
+def _rate_limit_key(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
+    return f"{ip}:{request.url.path}"
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    if os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true":
+        result = rate_limiter.check(_rate_limit_key(request))
+        if not result.allowed:
+            return JSONResponse(
+                status_code=429,
+                content={"error": {"code": "rate_limited", "message": "Too many requests"}},
+                headers={
+                    "X-RateLimit-Remaining": str(result.remaining),
+                    "X-RateLimit-Reset": str(result.reset_seconds),
+                },
+            )
+    response = await call_next(request)
+    return response
 
 
 def _raise_hyperswitch_error(exc: HyperswitchAPIError) -> None:
