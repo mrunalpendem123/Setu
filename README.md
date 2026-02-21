@@ -22,6 +22,40 @@ It includes:
 - Indus Orchestrator talks to **Hyperswitch** for payment creation & optional lifecycle actions.
 - Merchant API verifies payment with Hyperswitch on completion.
 
+### Architecture Flowchart
+
+```mermaid
+flowchart LR
+  subgraph "Client"
+    UserApp["Indus App (client/UI)"]
+  end
+
+  subgraph "Indus Orchestrator Service"
+    IndusAPI["Indus API (FastAPI)"]
+    IndusDB["Indus Postgres\nindus_sessions, indus_payments, indus_order_events"]
+  end
+
+  subgraph "Merchant Service"
+    MerchantAPI["Merchant API (FastAPI)"]
+    MerchantDB["Merchant Postgres\ncheckout_sessions, orders, idempotency_keys, audit_logs"]
+    Feed["Product Feed Endpoint\nGET /product_feed"]
+  end
+
+  subgraph "Payments"
+    Hyperswitch["Hyperswitch API"]
+  end
+
+  UserApp -->|"Checkout, Payment Intent, Complete"| IndusAPI
+  IndusAPI -->|"Create/Update/Get/Cancel/Complete"| MerchantAPI
+  IndusAPI -->|"Create Payment\n/indus/checkout/{id}/payment_intent"| Hyperswitch
+  MerchantAPI -->|"Verify Payment\nGET /payments/{payment_id}"| Hyperswitch
+  MerchantAPI -->|"Order webhook\norder.created / order.updated"| IndusAPI
+
+  IndusAPI --> IndusDB
+  MerchantAPI --> MerchantDB
+  MerchantAPI --> Feed
+```
+
 Services:
 
 - `indus/` – orchestrator (client-facing)
@@ -40,6 +74,45 @@ not_ready_for_payment -> ready_for_payment -> completed (or canceled)
 
 `not_ready_for_payment` means fulfillment address or option is missing.
 
+### Checkout Flowchart
+
+```mermaid
+sequenceDiagram
+  participant U as "Indus App"
+  participant I as "Indus API"
+  participant M as "Merchant API"
+  participant H as "Hyperswitch"
+  participant MDB as "Merchant DB"
+  participant IDB as "Indus DB"
+
+  U->>I: "POST /indus/checkout"
+  I->>M: "POST /checkout_sessions"
+  M->>MDB: "create checkout_session"
+  M-->>I: "checkout_session (status: not_ready_for_payment)"
+  I->>IDB: "store indus_session"
+  I-->>U: "checkout_session"
+
+  U->>I: "POST /indus/checkout/{id}/update\n(fulfillment_address + fulfillment_option_id)"
+  I->>M: "POST /checkout_sessions/{id}"
+  M->>MDB: "update session + totals"
+  M-->>I: "checkout_session (status: ready_for_payment)"
+  I-->>U: "checkout_session"
+
+  U->>I: "POST /indus/checkout/{id}/payment_intent"
+  I->>H: "POST /payments (Hyperswitch)"
+  H-->>I: "payment_id + client_secret"
+  I->>IDB: "store payment record"
+  I-->>U: "payment_id + client_secret"
+
+  U->>I: "POST /indus/checkout/{id}/complete\n(payment_data.token)"
+  I->>M: "POST /checkout_sessions/{id}/complete"
+  M->>H: "GET /payments/{payment_id} (verify)"
+  H-->>M: "status/amount/currency"
+  M->>MDB: "mark completed, create order"
+  M-->>I: "order summary"
+  I-->>U: "order_id + status"
+```
+
 ---
 
 ## Payment Flow (UPI / Cards via Hyperswitch)
@@ -48,6 +121,27 @@ not_ready_for_payment -> ready_for_payment -> completed (or canceled)
 2. **Update checkout** with `fulfillment_address` + `fulfillment_option_id` → status becomes `ready_for_payment`.
 3. **Create payment intent** (`/indus/checkout/{id}/payment_intent`) → calls Hyperswitch `/payments`.
 4. **Complete checkout** (`/indus/checkout/{id}/complete`) with `payment_data.token` → merchant verifies via Hyperswitch `/payments/{id}`.
+
+### Payment Flowchart
+
+```mermaid
+flowchart TD
+  Start["Start Payment (Indus)"]
+  Create["POST /indus/checkout/{id}/payment_intent"]
+  HSCreate["Hyperswitch /payments (create)"]
+  PayFlow["User completes UPI or card flow"]
+  Confirm["Optional: /indus/payments/{id}/confirm"]
+  Verify["Merchant verifies /payments/{id}"]
+  Complete["Checkout Complete -> Order Created"]
+
+  Start --> Create
+  Create --> HSCreate
+  HSCreate --> PayFlow
+  PayFlow --> Confirm
+  PayFlow --> Verify
+  Confirm --> Verify
+  Verify --> Complete
+```
 
 ---
 
