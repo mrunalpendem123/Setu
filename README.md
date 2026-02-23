@@ -19,8 +19,8 @@ It includes:
 
 - Indus App talks to **Indus Orchestrator**.
 - Indus Orchestrator talks to **Merchant API** for checkout/session/order.
-- Indus Orchestrator talks to **Hyperswitch** for payment creation & optional lifecycle actions.
-- Merchant API verifies payment with Hyperswitch on completion.
+- Indus Orchestrator talks to **Payments Service (Rust)** for all Hyperswitch calls.
+- Merchant API verifies payment via **Payments Service** on completion.
 
 ### Architecture Flowchart
 
@@ -42,13 +42,15 @@ flowchart LR
   end
 
   subgraph "Payments"
+    Payments["Payments Service (Rust)"]
     Hyperswitch["Hyperswitch API"]
   end
 
   UserApp -->|"Checkout, Payment Intent, Complete"| IndusAPI
   IndusAPI -->|"Create/Update/Get/Cancel/Complete"| MerchantAPI
-  IndusAPI -->|"Create Payment\n/indus/checkout/{id}/payment_intent"| Hyperswitch
-  MerchantAPI -->|"Verify Payment\nGET /payments/{payment_id}"| Hyperswitch
+  IndusAPI -->|"Create Payment\n/indus/checkout/{id}/payment_intent"| Payments
+  MerchantAPI -->|"Verify Payment\nGET /payments/{payment_id}"| Payments
+  Payments --> Hyperswitch
   MerchantAPI -->|"Order webhook\norder.created / order.updated"| IndusAPI
 
   IndusAPI --> IndusDB
@@ -81,6 +83,7 @@ sequenceDiagram
   participant U as "Indus App"
   participant I as "Indus API"
   participant M as "Merchant API"
+  participant P as "Payments Service"
   participant H as "Hyperswitch"
   participant MDB as "Merchant DB"
   participant IDB as "Indus DB"
@@ -99,15 +102,19 @@ sequenceDiagram
   I-->>U: "checkout_session"
 
   U->>I: "POST /indus/checkout/{id}/payment_intent"
-  I->>H: "POST /payments (Hyperswitch)"
-  H-->>I: "payment_id + client_secret"
+  I->>P: "POST /payments"
+  P->>H: "POST /payments (Hyperswitch)"
+  H-->>P: "payment_id + client_secret"
+  P-->>I: "payment_id + client_secret"
   I->>IDB: "store payment record"
   I-->>U: "payment_id + client_secret"
 
   U->>I: "POST /indus/checkout/{id}/complete\n(payment_data.token)"
   I->>M: "POST /checkout_sessions/{id}/complete"
-  M->>H: "GET /payments/{payment_id} (verify)"
-  H-->>M: "status/amount/currency"
+  M->>P: "GET /payments/{payment_id} (verify)"
+  P->>H: "GET /payments/{payment_id}"
+  H-->>P: "status/amount/currency"
+  P-->>M: "status/amount/currency"
   M->>MDB: "mark completed, create order"
   M-->>I: "order summary"
   I-->>U: "order_id + status"
@@ -119,8 +126,8 @@ sequenceDiagram
 
 1. **Create checkout** (`/indus/checkout`) → returns checkout session.
 2. **Update checkout** with `fulfillment_address` + `fulfillment_option_id` → status becomes `ready_for_payment`.
-3. **Create payment intent** (`/indus/checkout/{id}/payment_intent`) → calls Hyperswitch `/payments`.
-4. **Complete checkout** (`/indus/checkout/{id}/complete`) with `payment_data.token` → merchant verifies via Hyperswitch `/payments/{id}`.
+3. **Create payment intent** (`/indus/checkout/{id}/payment_intent`) → calls the Rust payments service → Hyperswitch.
+4. **Complete checkout** (`/indus/checkout/{id}/complete`) with `payment_data.token` → merchant verifies via the Rust payments service → Hyperswitch.
 
 ### Payment Flowchart
 
@@ -128,6 +135,7 @@ sequenceDiagram
 flowchart TD
   Start["Start Payment (Indus)"]
   Create["POST /indus/checkout/{id}/payment_intent"]
+  Payments["Payments Service (Rust)"]
   HSCreate["Hyperswitch /payments (create)"]
   PayFlow["User completes UPI or card flow"]
   Confirm["Optional: /indus/payments/{id}/confirm"]
@@ -135,7 +143,8 @@ flowchart TD
   Complete["Checkout Complete -> Order Created"]
 
   Start --> Create
-  Create --> HSCreate
+  Create --> Payments
+  Payments --> HSCreate
   HSCreate --> PayFlow
   PayFlow --> Confirm
   PayFlow --> Verify
@@ -145,9 +154,9 @@ flowchart TD
 
 ---
 
-## Hyperswitch API Coverage (Indus Pass‑Through)
+## Hyperswitch API Coverage (Payments Service)
 
-Indus exposes nearly the entire Hyperswitch Payments API (as pass‑through):
+The Rust **Payments Service** exposes nearly the entire Hyperswitch Payments API (as pass‑through), and Indus proxies to it when `PAYMENTS_SERVICE_URL` is set:
 
 - Create/update/confirm/retrieve/cancel/capture payments
 - Incremental auth / extend auth
@@ -170,21 +179,23 @@ See `indus/README.md` for the full list of endpoints.
 ```
 /indus
   /app
-    main.py              # Indus API + Hyperswitch pass-through
-    hyperswitch.py       # Hyperswitch client (auth + retries)
+    main.py              # Indus API + payments service proxy
+    hyperswitch.py       # Hyperswitch client (fallback)
     models.py            # Indus API schema
     db.py                # Postgres persistence
     merchant_client.py   # Merchant API client
 /merchant
   /app
     main.py              # Merchant checkout/order API
-    payment_verify.py    # Hyperswitch verification
+    payment_verify.py    # Payments service or Hyperswitch verification
     feed.py              # Product feed builder
     feed_export.py       # Export/push feed
     models.py            # Merchant schema
     db.py                # Postgres persistence
 /psp
   # ACP delegated payment stub (unused)
+/payments
+  # Rust payments service (Hyperswitch proxy)
 ```
 
 ---
@@ -199,11 +210,30 @@ See `indus/README.md` for the full list of endpoints.
 - `RATE_LIMIT_REQUESTS` (default `60`)
 - `RATE_LIMIT_WINDOW_SECONDS` (default `60`)
 
+### Payments Service (Rust)
+
+Set these on the **payments** service:
+
+- `HYPERSWITCH_BASE_URL` (default `https://sandbox.hyperswitch.io`)
+- `HYPERSWITCH_API_KEY`
+- `HYPERSWITCH_PUBLISHABLE_KEY`
+- `HYPERSWITCH_ADMIN_API_KEY`
+- `HYPERSWITCH_VAULT_API_KEY`
+- `HYPERSWITCH_API_KEY_HEADER` (default `api-key`)
+- `HYPERSWITCH_MERCHANT_ID` (optional)
+- `HYPERSWITCH_TIMEOUT_SECONDS` (default `20`)
+- `HYPERSWITCH_MAX_RETRIES` (default `3`)
+- `HYPERSWITCH_RETRY_BACKOFF_MS` (default `200`)
+- `HYPERSWITCH_PAYMENT_METHOD_SESSION_PATH` (default `/v2/payment-method-session`)
+- `PAYMENTS_PORT` (default `9000`)
+
 ### Indus Orchestrator
 
 - `INDUS_API_KEY` – optional internal auth between Indus → Merchant
+- `PAYMENTS_SERVICE_URL` – URL for the Rust payments service
+- `PAYMENTS_SERVICE_TIMEOUT_SECONDS` (default `20`)
 
-Hyperswitch:
+Hyperswitch (used only if `PAYMENTS_SERVICE_URL` is not set):
 
 - `HYPERSWITCH_BASE_URL` (default `https://sandbox.hyperswitch.io`)
 - `HYPERSWITCH_API_KEY`
@@ -220,7 +250,9 @@ Hyperswitch:
 ### Merchant API
 
 - `INDUS_API_KEYS` – comma‑separated keys to authorize Indus
-- `HYPERSWITCH_BASE_URL`, `HYPERSWITCH_API_KEY`, `HYPERSWITCH_API_KEY_HEADER`, `HYPERSWITCH_MERCHANT_ID`
+- `PAYMENTS_SERVICE_URL` – URL for the Rust payments service
+- `PAYMENTS_SERVICE_TIMEOUT_SECONDS` (default `20`)
+- `HYPERSWITCH_BASE_URL`, `HYPERSWITCH_API_KEY`, `HYPERSWITCH_API_KEY_HEADER`, `HYPERSWITCH_MERCHANT_ID` (fallback only)
 - `HYPERSWITCH_ACCEPTED_STATUSES` (default `succeeded,processing,requires_capture`)
 - `HYPERSWITCH_TIMEOUT_SECONDS` (default `20`)
 - `HYPERSWITCH_MAX_RETRIES` (default `3`)
@@ -309,6 +341,15 @@ export HYPERSWITCH_VAULT_API_KEY=your_vault_key
 uvicorn app.main:app --reload --port 8000
 ```
 
+### Payments Service (Rust)
+
+```bash
+cd payments
+cargo run
+```
+
+Then set `PAYMENTS_SERVICE_URL=http://localhost:9000` for Indus and Merchant.
+
 ## Quick Start (Docker)
 
 ```bash
@@ -319,7 +360,7 @@ export HYPERSWITCH_VAULT_API_KEY=your_vault_key
 docker compose up --build
 ```
 
-Indus will be on `http://localhost:8000` and Merchant on `http://localhost:8001`.
+Indus will be on `http://localhost:8000`, Merchant on `http://localhost:8001`, and Payments on `http://localhost:9000`.
 
 ---
 

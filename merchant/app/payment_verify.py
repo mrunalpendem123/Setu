@@ -6,6 +6,7 @@ from typing import Tuple, Set, Any
 
 import httpx
 
+from .payments_client import PaymentsServiceClient, payments_service_enabled
 
 class PaymentVerificationError(RuntimeError):
     pass
@@ -66,38 +67,45 @@ def verify_hyperswitch_payment(
     if not payment_id or amount <= 0 or not currency:
         return False, "invalid_payment_data"
 
-    base_url = _api_base().rstrip("/")
-    headers = {
-        _api_key_header(): _api_key(),
-        "Content-Type": "application/json",
-    }
+    if payments_service_enabled():
+        try:
+            client = PaymentsServiceClient()
+            data: Any = client.retrieve_payment(payment_id)
+        except Exception:
+            return False, "payments_service_error"
+    else:
+        base_url = _api_base().rstrip("/")
+        headers = {
+            _api_key_header(): _api_key(),
+            "Content-Type": "application/json",
+        }
 
-    merchant_id = _merchant_id()
-    if merchant_id:
-        headers["x-merchant-id"] = merchant_id
+        merchant_id = _merchant_id()
+        if merchant_id:
+            headers["x-merchant-id"] = merchant_id
 
-    max_retries = _max_retries()
-    backoff_ms = _retry_backoff_ms()
-    timeout = _timeout_seconds()
-    data: Any = None
+        max_retries = _max_retries()
+        backoff_ms = _retry_backoff_ms()
+        timeout = _timeout_seconds()
+        data: Any = None
 
-    for attempt in range(max_retries + 1):
-        with httpx.Client(base_url=base_url, headers=headers, timeout=timeout) as client:
-            response = client.get(f"/payments/{payment_id}")
+        for attempt in range(max_retries + 1):
+            with httpx.Client(base_url=base_url, headers=headers, timeout=timeout) as client:
+                response = client.get(f"/payments/{payment_id}")
 
-        if response.status_code < 400:
-            data = response.json()
-            break
+            if response.status_code < 400:
+                data = response.json()
+                break
 
-        if attempt < max_retries and _should_retry(response):
-            sleep_seconds = (backoff_ms / 1000.0) * (2**attempt)
-            time.sleep(sleep_seconds)
-            continue
+            if attempt < max_retries and _should_retry(response):
+                sleep_seconds = (backoff_ms / 1000.0) * (2**attempt)
+                time.sleep(sleep_seconds)
+                continue
 
-        return False, f"hyperswitch_error:{response.status_code}"
+            return False, f"hyperswitch_error:{response.status_code}"
 
-    if data is None:
-        return False, "hyperswitch_error"
+        if data is None:
+            return False, "hyperswitch_error"
 
     status = data.get("status")
     returned_amount = data.get("amount")

@@ -44,8 +44,10 @@ Checkout status flow mirrors OpenAI Commerce:
 - `RATE_LIMIT_ENABLED` (default `true`)
 - `RATE_LIMIT_REQUESTS` (default `60`)
 - `RATE_LIMIT_WINDOW_SECONDS` (default `60`)
+- `PAYMENTS_SERVICE_URL` (optional; if set, use Rust payments service)
+- `PAYMENTS_SERVICE_TIMEOUT_SECONDS` (default `20`)
 
-Hyperswitch:
+Hyperswitch (used when `PAYMENTS_SERVICE_URL` is not set). If `PAYMENTS_SERVICE_URL` is set, Hyperswitch keys are only required on the Rust payments service:
 
 - `HYPERSWITCH_BASE_URL` (default `https://sandbox.hyperswitch.io`)
 - `HYPERSWITCH_API_KEY`
@@ -83,4 +85,10 @@ export DATABASE_URL="postgresql+psycopg://user:pass@localhost:5432/indus"
 export INDUS_API_KEY=demo_key
 export HYPERSWITCH_API_KEY=your_key
 uvicorn app.main:app --reload --port 8000
+```
+
+If you are running the Rust payments service, set:
+
+```
+export PAYMENTS_SERVICE_URL="http://localhost:9000"
 ```

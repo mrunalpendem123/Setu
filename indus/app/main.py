@@ -27,6 +27,7 @@ from .merchant_client import MerchantClient
 from .hyperswitch import HyperswitchClient, HyperswitchAPIError
 from .sarvam_client import SarvamClient, SarvamAPIError
 from .rate_limit import RateLimiter
+from .payments_client import PaymentsServiceClient, PaymentsServiceError, payments_service_enabled
 from .db import init_db, get_db, SessionRecord, PaymentRecord, OrderEvent
 
 
@@ -66,6 +67,10 @@ def _raise_hyperswitch_error(exc: HyperswitchAPIError) -> None:
 
 
 def _raise_sarvam_error(exc: SarvamAPIError) -> None:
+    raise HTTPException(status_code=exc.status_code, detail=exc.payload)
+
+
+def _raise_payments_error(exc: PaymentsServiceError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.payload)
 
 
@@ -196,15 +201,23 @@ def create_payment_intent(
         if not record:
             raise HTTPException(status_code=404, detail="unknown_session")
 
-    client = HyperswitchClient()
     request_data = payload.model_dump(exclude_none=True)
     metadata = dict(request_data.get("metadata") or {})
     metadata.setdefault("checkout_session_id", session_id)
     request_data["metadata"] = metadata
-    try:
-        record_data = client.create_payment_intent(request_data)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
+
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            record_data = client.create_payment(request_data)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
+    else:
+        client = HyperswitchClient()
+        try:
+            record_data = client.create_payment_intent(request_data)
+        except HyperswitchAPIError as exc:
+            _raise_hyperswitch_error(exc)
 
     payment_id = record_data.get("payment_id") or record_data.get("id")
     if not payment_id:
@@ -256,6 +269,12 @@ def complete_checkout(
 
 @app.post("/indus/payments")
 def hyperswitch_create_payment(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.create_payment(payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.create_payment(payload)
@@ -268,6 +287,12 @@ def hyperswitch_update_payment(
     payment_id: str,
     payload: Dict[str, Any] = Body(default={}),
 ) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.update_payment(payment_id, payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.update_payment(payment_id, payload)
@@ -280,6 +305,12 @@ def hyperswitch_confirm_payment(
     payment_id: str,
     payload: Dict[str, Any] = Body(default={}),
 ) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.confirm_payment(payment_id, payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.confirm_payment(payment_id, payload)
@@ -292,6 +323,12 @@ def hyperswitch_retrieve_payment(
     payment_id: str,
     request: Request,
 ) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.retrieve_payment(payment_id, params=dict(request.query_params))
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.retrieve_payment(payment_id, params=dict(request.query_params))
@@ -304,6 +341,12 @@ def hyperswitch_cancel_payment(
     payment_id: str,
     payload: Dict[str, Any] = Body(default={}),
 ) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.cancel_payment(payment_id, payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.cancel_payment(payment_id, payload)
@@ -316,6 +359,12 @@ def hyperswitch_cancel_post_capture(
     payment_id: str,
     payload: Dict[str, Any] = Body(default={}),
 ) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.cancel_post_capture(payment_id, payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.cancel_payment_post_capture(payment_id, payload)
@@ -328,6 +377,12 @@ def hyperswitch_capture_payment(
     payment_id: str,
     payload: Dict[str, Any] = Body(default={}),
 ) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.capture_payment(payment_id, payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.capture_payment(payment_id, payload)
@@ -340,6 +395,12 @@ def hyperswitch_incremental_authorization(
     payment_id: str,
     payload: Dict[str, Any] = Body(default={}),
 ) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.incremental_authorization(payment_id, payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.incremental_authorization(payment_id, payload)
@@ -349,6 +410,12 @@ def hyperswitch_incremental_authorization(
 
 @app.post("/indus/payments/{payment_id}/extend_authorization")
 def hyperswitch_extend_authorization(payment_id: str) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.extend_authorization(payment_id)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.extend_authorization(payment_id)
@@ -358,6 +425,12 @@ def hyperswitch_extend_authorization(payment_id: str) -> Dict[str, Any]:
 
 @app.post("/indus/payments/session_tokens")
 def hyperswitch_session_tokens(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.session_tokens(payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.create_session_token(payload)
@@ -367,6 +440,12 @@ def hyperswitch_session_tokens(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 @app.get("/indus/payment_links/{payment_link_id}")
 def hyperswitch_payment_link_retrieve(payment_link_id: str) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.payment_link(payment_link_id)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.retrieve_payment_link(payment_link_id)
@@ -376,6 +455,12 @@ def hyperswitch_payment_link_retrieve(payment_link_id: str) -> Dict[str, Any]:
 
 @app.get("/indus/payments")
 def hyperswitch_list_payments(request: Request) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.list_payments(params=dict(request.query_params))
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.list_payments(params=dict(request.query_params))
@@ -388,6 +473,12 @@ def hyperswitch_external_3ds(
     payment_id: str,
     payload: Dict[str, Any] = Body(default={}),
 ) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.external_3ds(payment_id, payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.external_3ds_authentication(payment_id, payload)
@@ -400,6 +491,12 @@ def hyperswitch_complete_authorize(
     payment_id: str,
     payload: Dict[str, Any] = Body(default={}),
 ) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.complete_authorize(payment_id, payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.complete_authorize(payment_id, payload)
@@ -412,6 +509,12 @@ def hyperswitch_update_metadata(
     payment_id: str,
     payload: Dict[str, Any] = Body(default={}),
 ) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.update_metadata(payment_id, payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.update_metadata(payment_id, payload)
@@ -424,6 +527,12 @@ def hyperswitch_submit_eligibility(
     payment_id: str,
     payload: Dict[str, Any] = Body(default={}),
 ) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.submit_eligibility(payment_id, payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.submit_eligibility(payment_id, payload)
@@ -433,6 +542,12 @@ def hyperswitch_submit_eligibility(
 
 @app.post("/indus/payment_method_sessions")
 def hyperswitch_payment_method_session(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.payment_method_sessions(payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.create_payment_method_session(payload)
@@ -445,6 +560,12 @@ def hyperswitch_create_api_key(
     merchant_id: str,
     payload: Dict[str, Any] = Body(default={}),
 ) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.create_api_key(merchant_id, payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
     client = HyperswitchClient()
     try:
         return client.create_api_key(merchant_id, payload)
