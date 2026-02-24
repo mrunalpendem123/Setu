@@ -1,0 +1,22 @@
+name: Bug report
+description: Report a bug
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Describe the issue.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+      description: Provide steps to reproduce.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Logs
+      description: Add logs or stack traces if available.
+    validations:
+      required: false

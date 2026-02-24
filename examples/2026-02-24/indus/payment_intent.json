@@ -1,0 +1,6 @@
+{
+  "amount": 99900,
+  "currency": "inr",
+  "payment_method": "upi",
+  "payment_method_type": "upi_intent"
+}

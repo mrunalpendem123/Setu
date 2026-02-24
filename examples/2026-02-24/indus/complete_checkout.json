@@ -1,0 +1,6 @@
+{
+  "payment_data": {
+    "provider": "hyperswitch",
+    "token": "pay_123"
+  }
+}

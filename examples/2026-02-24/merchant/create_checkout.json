@@ -1,0 +1,4 @@
+{
+  "items": [{"id": "item_123", "quantity": 1}],
+  "buyer": {"email": "user@example.com"}
+}

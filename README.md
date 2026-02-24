@@ -196,7 +196,25 @@ See `indus/README.md` for the full list of endpoints.
   # ACP delegated payment stub (unused)
 /payments
   # Rust payments service (Hyperswitch proxy)
+docs/
+  # Governance, versioning, deployment
+rfc/
+  # Protocol RFCs
+spec/
+  # OpenAPI + JSON Schema (versioned)
+examples/
+  # Versioned request examples
+changelog/
+  # Versioned changelogs
 ```
+
+## Specs and Governance
+
+- Specs: `spec/2026-02-24/` and `spec/unreleased/`
+- Examples: `examples/2026-02-24/`
+- RFCs: `rfc/`
+- Governance: `docs/governance.md`, `docs/sep-guidelines.md`
+- Versioning: `docs/versioning.md`
 
 ---
 
@@ -493,4 +511,19 @@ curl -s -X POST http://localhost:8000/indus/sarvam/proxy \
 
 ## License
 
-Add your preferred license.
+Apache 2.0. See `LICENSE`.
+
+## Project Files
+
+- `LICENSE`
+- `NOTICE`
+- `CODE_OF_CONDUCT.md`
+- `CONTRIBUTING.md`
+- `MAINTAINERS.md`
+- `CHANGELOG.md`
+
+## Environment Examples
+
+- `indus/.env.example`
+- `merchant/.env.example`
+- `payments/.env.example`

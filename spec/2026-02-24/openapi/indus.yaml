@@ -1,0 +1,155 @@
+openapi: 3.1.0
+info:
+  title: Indus Orchestrator API
+  version: "2026-02-24"
+paths:
+  /indus/checkout:
+    post:
+      summary: Create checkout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../json-schema/indus_checkout_create.json"
+      responses:
+        "200":
+          description: Checkout session
+  /indus/checkout/{id}/update:
+    post:
+      summary: Update checkout
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../json-schema/indus_checkout_update.json"
+      responses:
+        "200":
+          description: Checkout session
+  /indus/checkout/{id}:
+    get:
+      summary: Get checkout
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Checkout session
+  /indus/checkout/{id}/cancel:
+    post:
+      summary: Cancel checkout
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Checkout session
+  /indus/checkout/{id}/payment_intent:
+    post:
+      summary: Create payment intent
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../json-schema/indus_payment_intent.json"
+      responses:
+        "200":
+          description: Payment intent
+  /indus/checkout/{id}/complete:
+    post:
+      summary: Complete checkout
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../json-schema/indus_checkout_complete.json"
+      responses:
+        "200":
+          description: Order created
+  /indus/payments:
+    get:
+      summary: List payments
+    post:
+      summary: Create payment
+  /indus/payments/{id}:
+    get:
+      summary: Retrieve payment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+    post:
+      summary: Update payment
+  /indus/payments/{id}/confirm:
+    post:
+      summary: Confirm payment
+  /indus/payments/{id}/cancel:
+    post:
+      summary: Cancel payment
+  /indus/payments/{id}/cancel_post_capture:
+    post:
+      summary: Cancel post capture
+  /indus/payments/{id}/capture:
+    post:
+      summary: Capture payment
+  /indus/payments/{id}/incremental_authorization:
+    post:
+      summary: Incremental authorization
+  /indus/payments/{id}/extend_authorization:
+    post:
+      summary: Extend authorization
+  /indus/payments/session_tokens:
+    post:
+      summary: Create session token
+  /indus/payment_links/{id}:
+    get:
+      summary: Retrieve payment link
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+  /indus/payments/{id}/3ds/authentication:
+    post:
+      summary: External 3DS authentication
+  /indus/payments/{id}/complete_authorize:
+    post:
+      summary: Complete authorize
+  /indus/payments/{id}/update_metadata:
+    post:
+      summary: Update metadata
+  /indus/payments/{id}/eligibility:
+    post:
+      summary: Submit eligibility
+  /indus/payment_method_sessions:
+    post:
+      summary: Create payment method session
+  /indus/api_keys/{merchant_id}:
+    post:
+      summary: Create API key
+  /indus/sarvam/proxy:
+    post:
+      summary: Sarvam proxy

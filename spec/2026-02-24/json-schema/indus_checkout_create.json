@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["merchant_base_url", "items"],
+  "properties": {
+    "merchant_base_url": {"type": "string"},
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "quantity"],
+        "properties": {
+          "id": {"type": "string"},
+          "quantity": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "buyer": {"type": "object"},
+    "fulfillment_address": {"type": "object"}
+  }
+}

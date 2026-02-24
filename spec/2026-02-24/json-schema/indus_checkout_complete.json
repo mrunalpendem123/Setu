@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["payment_data"],
+  "properties": {
+    "payment_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "token"],
+      "properties": {
+        "provider": {"type": "string"},
+        "token": {"type": "string"},
+        "billing_address": {"type": "object"}
+      }
+    }
+  }
+}

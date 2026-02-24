@@ -1,0 +1,5 @@
+{
+  "merchant_base_url": "http://localhost:8001",
+  "items": [{"id": "item_123", "quantity": 1}],
+  "buyer": {"email": "user@example.com"}
+}

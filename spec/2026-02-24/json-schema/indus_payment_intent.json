@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["amount", "currency", "payment_method"],
+  "properties": {
+    "amount": {"type": "integer", "minimum": 1},
+    "currency": {"type": "string", "minLength": 3, "maxLength": 3},
+    "payment_method": {"type": "string"},
+    "payment_method_type": {"type": "string"},
+    "customer": {"type": "object"},
+    "return_url": {"type": "string"},
+    "confirm": {"type": "boolean"},
+    "metadata": {"type": "object"}
+  }
+}

@@ -1,0 +1,89 @@
+openapi: 3.1.0
+info:
+  title: Merchant API
+  version: "2026-02-24"
+paths:
+  /checkout_sessions:
+    post:
+      summary: Create checkout session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../json-schema/merchant_checkout_create.json"
+      responses:
+        "200":
+          description: Checkout session
+  /checkout_sessions/{id}:
+    post:
+      summary: Update checkout session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../json-schema/merchant_checkout_update.json"
+      responses:
+        "200":
+          description: Checkout session
+    get:
+      summary: Get checkout session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Checkout session
+  /checkout_sessions/{id}/cancel:
+    post:
+      summary: Cancel checkout session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Checkout session
+  /checkout_sessions/{id}/complete:
+    post:
+      summary: Complete checkout session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../json-schema/merchant_checkout_complete.json"
+      responses:
+        "200":
+          description: Order created
+  /orders/{id}/update:
+    post:
+      summary: Update order
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Order updated
+  /product_feed:
+    get:
+      summary: Product feed
+      responses:
+        "200":
+          description: Feed

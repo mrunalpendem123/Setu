@@ -1,0 +1,12 @@
+{
+  "fulfillment_address": {
+    "name": "Asha Verma",
+    "line_one": "11 MG Road",
+    "city": "Bengaluru",
+    "state": "KA",
+    "country": "IN",
+    "postal_code": "560001",
+    "phone_number": "+91 90000 00000"
+  },
+  "fulfillment_option_id": "standard"
+}
