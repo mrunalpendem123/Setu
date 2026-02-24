@@ -60,6 +60,15 @@ class PaymentsServiceClient:
     def list_payments(self, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         return self._get("/payments", params)
 
+    def confirm_intent(self, payment_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self._post(f"/payments/{payment_id}/confirm_intent", payload)
+
+    def payment_methods(self, payment_id: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return self._get(f"/payments/{payment_id}/payment_methods", params)
+
+    def create_external_sdk_tokens(self, payment_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self._post(f"/payments/{payment_id}/create_external_sdk_tokens", payload)
+
     def external_3ds(self, payment_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self._post(f"/payments/{payment_id}/3ds/authentication", payload)
 

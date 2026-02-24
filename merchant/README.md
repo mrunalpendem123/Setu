@@ -46,6 +46,7 @@ Hyperswitch (used when `PAYMENTS_SERVICE_URL` is not set). If `PAYMENTS_SERVICE_
 - `HYPERSWITCH_API_KEY`
 - `HYPERSWITCH_API_KEY_HEADER` (default `api-key`)
 - `HYPERSWITCH_MERCHANT_ID` (optional)
+- `HYPERSWITCH_PROFILE_ID` (optional)
 - `HYPERSWITCH_ACCEPTED_STATUSES` (default `succeeded,processing,requires_capture`)
 - `HYPERSWITCH_TIMEOUT_SECONDS` (default `20`)
 - `HYPERSWITCH_MAX_RETRIES` (default `3`)

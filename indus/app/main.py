@@ -318,6 +318,24 @@ def hyperswitch_confirm_payment(
         _raise_hyperswitch_error(exc)
 
 
+@app.post("/indus/payments/{payment_id}/confirm_intent")
+def hyperswitch_confirm_intent(
+    payment_id: str,
+    payload: Dict[str, Any] = Body(default={}),
+) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.confirm_intent(payment_id, payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
+    client = HyperswitchClient()
+    try:
+        return client.confirm_intent(payment_id, payload)
+    except HyperswitchAPIError as exc:
+        _raise_hyperswitch_error(exc)
+
+
 @app.get("/indus/payments/{payment_id}")
 def hyperswitch_retrieve_payment(
     payment_id: str,
@@ -332,6 +350,24 @@ def hyperswitch_retrieve_payment(
     client = HyperswitchClient()
     try:
         return client.retrieve_payment(payment_id, params=dict(request.query_params))
+    except HyperswitchAPIError as exc:
+        _raise_hyperswitch_error(exc)
+
+
+@app.get("/indus/payments/{payment_id}/payment_methods")
+def hyperswitch_payment_methods(
+    payment_id: str,
+    request: Request,
+) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.payment_methods(payment_id, params=dict(request.query_params))
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
+    client = HyperswitchClient()
+    try:
+        return client.payment_methods(payment_id, params=dict(request.query_params))
     except HyperswitchAPIError as exc:
         _raise_hyperswitch_error(exc)
 
@@ -500,6 +536,24 @@ def hyperswitch_complete_authorize(
     client = HyperswitchClient()
     try:
         return client.complete_authorize(payment_id, payload)
+    except HyperswitchAPIError as exc:
+        _raise_hyperswitch_error(exc)
+
+
+@app.post("/indus/payments/{payment_id}/create_external_sdk_tokens")
+def hyperswitch_create_external_sdk_tokens(
+    payment_id: str,
+    payload: Dict[str, Any] = Body(default={}),
+) -> Dict[str, Any]:
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.create_external_sdk_tokens(payment_id, payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
+    client = HyperswitchClient()
+    try:
+        return client.create_external_sdk_tokens(payment_id, payload)
     except HyperswitchAPIError as exc:
         _raise_hyperswitch_error(exc)
 

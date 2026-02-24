@@ -14,7 +14,9 @@ It uses Postgres persistence.
 - `POST /indus/payments`
 - `POST /indus/payments/{id}`
 - `POST /indus/payments/{id}/confirm`
+- `POST /indus/payments/{id}/confirm_intent`
 - `GET /indus/payments/{id}`
+- `GET /indus/payments/{id}/payment_methods`
 - `POST /indus/payments/{id}/cancel`
 - `POST /indus/payments/{id}/cancel_post_capture`
 - `POST /indus/payments/{id}/capture`
@@ -25,6 +27,7 @@ It uses Postgres persistence.
 - `GET /indus/payments`
 - `POST /indus/payments/{id}/3ds/authentication`
 - `POST /indus/payments/{id}/complete_authorize`
+- `POST /indus/payments/{id}/create_external_sdk_tokens`
 - `POST /indus/payments/{id}/update_metadata`
 - `POST /indus/payments/{id}/eligibility`
 - `POST /indus/payment_method_sessions`
@@ -53,6 +56,7 @@ Hyperswitch (used when `PAYMENTS_SERVICE_URL` is not set). If `PAYMENTS_SERVICE_
 - `HYPERSWITCH_API_KEY`
 - `HYPERSWITCH_API_KEY_HEADER` (default `api-key`)
 - `HYPERSWITCH_MERCHANT_ID` (optional)
+- `HYPERSWITCH_PROFILE_ID` (optional)
 - `HYPERSWITCH_PUBLISHABLE_KEY` (required for session tokens / payment links)
 - `HYPERSWITCH_ADMIN_API_KEY` (required for API key creation)
 - `HYPERSWITCH_VAULT_API_KEY` (required for payment method sessions)

@@ -129,6 +129,8 @@ sequenceDiagram
 3. **Create payment intent** (`/indus/checkout/{id}/payment_intent`) → calls the Rust payments service → Hyperswitch.
 4. **Complete checkout** (`/indus/checkout/{id}/complete`) with `payment_data.token` → merchant verifies via the Rust payments service → Hyperswitch.
 
+See `docs/hyperswitch.md` for the client experience mapping using `client_secret`.
+
 ### Payment Flowchart
 
 ```mermaid
@@ -239,6 +241,7 @@ Set these on the **payments** service:
 - `HYPERSWITCH_VAULT_API_KEY`
 - `HYPERSWITCH_API_KEY_HEADER` (default `api-key`)
 - `HYPERSWITCH_MERCHANT_ID` (optional)
+- `HYPERSWITCH_PROFILE_ID` (optional)
 - `HYPERSWITCH_TIMEOUT_SECONDS` (default `20`)
 - `HYPERSWITCH_MAX_RETRIES` (default `3`)
 - `HYPERSWITCH_RETRY_BACKOFF_MS` (default `200`)

@@ -20,6 +20,7 @@ struct AppState {
     vault_key: Option<String>,
     api_key_header: String,
     merchant_id: Option<String>,
+    profile_id: Option<String>,
     timeout_seconds: u64,
     max_retries: usize,
     retry_backoff_ms: u64,
@@ -110,6 +111,9 @@ async fn hyperswitch_request(
         request = request.header("Content-Type", "application/json");
         if let Some(ref merchant_id) = state.merchant_id {
             request = request.header("x-merchant-id", merchant_id);
+        }
+        if let Some(ref profile_id) = state.profile_id {
+            request = request.header("X-Profile-Id", profile_id);
         }
         if let Some(ref body_value) = body {
             request = request.json(body_value);
@@ -305,6 +309,51 @@ async fn session_tokens(State(state): State<Arc<AppState>>, Json(body): Json<Val
     proxy_post(State(state), "/payments/session_tokens".to_string(), KeyType::Publishable, Json(body)).await
 }
 
+async fn create_external_sdk_tokens(
+    State(state): State<Arc<AppState>>,
+    Path(payment_id): Path<String>,
+    body: Option<Json<Value>>,
+) -> Result<Json<Value>, ApiError> {
+    proxy_post_optional(
+        State(state),
+        format!("/v2/payments/{payment_id}/create-external-sdk-tokens"),
+        KeyType::Publishable,
+        body,
+    )
+    .await
+}
+
+async fn confirm_intent_v2(
+    State(state): State<Arc<AppState>>,
+    Path(payment_id): Path<String>,
+    body: Option<Json<Value>>,
+) -> Result<Json<Value>, ApiError> {
+    proxy_post_optional(
+        State(state),
+        format!("/v2/payments/{payment_id}/confirm-intent"),
+        KeyType::Secret,
+        body,
+    )
+    .await
+}
+
+async fn payment_methods_list_v2(
+    State(state): State<Arc<AppState>>,
+    Path(payment_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    let payload = hyperswitch_request(
+        &state,
+        Method::GET,
+        &format!("/v2/payments/{payment_id}/payment-methods"),
+        KeyType::Secret,
+        None,
+        Some(params),
+    )
+    .await?;
+    Ok(Json(payload))
+}
+
 async fn payment_link_retrieve(
     State(state): State<Arc<AppState>>,
     Path(link_id): Path<String>,
@@ -424,6 +473,7 @@ async fn main() -> Result<(), ApiError> {
         vault_key: env_optional("HYPERSWITCH_VAULT_API_KEY"),
         api_key_header: std::env::var("HYPERSWITCH_API_KEY_HEADER").unwrap_or_else(|_| "api-key".to_string()),
         merchant_id: env_optional("HYPERSWITCH_MERCHANT_ID"),
+        profile_id: env_optional("HYPERSWITCH_PROFILE_ID"),
         timeout_seconds: env_u64("HYPERSWITCH_TIMEOUT_SECONDS", 20),
         max_retries: env_usize("HYPERSWITCH_MAX_RETRIES", 3),
         retry_backoff_ms: env_u64("HYPERSWITCH_RETRY_BACKOFF_MS", 200),
@@ -435,15 +485,18 @@ async fn main() -> Result<(), ApiError> {
         .route("/payments/session_tokens", post(session_tokens))
         .route("/payments/:payment_id", post(update_payment).get(retrieve_payment))
         .route("/payments/:payment_id/confirm", post(confirm_payment))
+        .route("/payments/:payment_id/confirm_intent", post(confirm_intent_v2))
         .route("/payments/:payment_id/cancel", post(cancel_payment))
         .route("/payments/:payment_id/cancel_post_capture", post(cancel_post_capture))
         .route("/payments/:payment_id/capture", post(capture_payment))
         .route("/payments/:payment_id/incremental_authorization", post(incremental_authorization))
         .route("/payments/:payment_id/extend_authorization", post(extend_authorization))
         .route("/payments/:payment_id/3ds/authentication", post(external_3ds))
+        .route("/payments/:payment_id/payment_methods", get(payment_methods_list_v2))
         .route("/payments/:payment_id/complete_authorize", post(complete_authorize))
         .route("/payments/:payment_id/update_metadata", post(update_metadata))
         .route("/payments/:payment_id/eligibility", post(submit_eligibility))
+        .route("/payments/:payment_id/create_external_sdk_tokens", post(create_external_sdk_tokens))
         .route("/payment_links/:link_id", get(payment_link_retrieve))
         .route("/payment_method_sessions", post(payment_method_sessions))
         .route("/api_keys/:merchant_id", post(create_api_key))

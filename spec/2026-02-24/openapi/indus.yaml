@@ -106,6 +106,15 @@ paths:
   /indus/payments/{id}/confirm:
     post:
       summary: Confirm payment
+  /indus/payments/{id}/confirm_intent:
+    post:
+      summary: Confirm intent (v2)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../json-schema/indus_payment_action.json"
   /indus/payments/{id}/cancel:
     post:
       summary: Cancel payment
@@ -135,6 +144,18 @@ paths:
   /indus/payments/{id}/3ds/authentication:
     post:
       summary: External 3DS authentication
+  /indus/payments/{id}/create_external_sdk_tokens:
+    post:
+      summary: Create external SDK tokens (v2)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../json-schema/indus_payment_action.json"
+  /indus/payments/{id}/payment_methods:
+    get:
+      summary: List payment methods (v2)
   /indus/payments/{id}/complete_authorize:
     post:
       summary: Complete authorize

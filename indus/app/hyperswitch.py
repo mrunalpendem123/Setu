@@ -47,6 +47,10 @@ def _merchant_id() -> str | None:
     return os.getenv("HYPERSWITCH_MERCHANT_ID")
 
 
+def _profile_id() -> str | None:
+    return os.getenv("HYPERSWITCH_PROFILE_ID")
+
+
 def _timeout_seconds() -> float:
     return float(os.getenv("HYPERSWITCH_TIMEOUT_SECONDS", "20"))
 
@@ -75,6 +79,7 @@ class HyperswitchClient:
         self.base_url = _api_base().rstrip("/")
         self.api_key_header = _api_key_header()
         self.merchant_id = _merchant_id()
+        self.profile_id = _profile_id()
         self.timeout = _timeout_seconds()
 
     def _headers(
@@ -95,6 +100,8 @@ class HyperswitchClient:
         }
         if self.merchant_id:
             headers["x-merchant-id"] = self.merchant_id
+        if self.profile_id:
+            headers["X-Profile-Id"] = self.profile_id
         return headers
 
     def _should_retry(self, response: httpx.Response) -> bool:
@@ -195,6 +202,20 @@ class HyperswitchClient:
 
     def submit_eligibility(self, payment_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self._request("POST", f"/payments/{payment_id}/eligibility", payload=payload)
+
+    def confirm_intent(self, payment_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self._request("POST", f"/v2/payments/{payment_id}/confirm-intent", payload=payload)
+
+    def payment_methods(self, payment_id: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return self._request("GET", f"/v2/payments/{payment_id}/payment-methods", params=params)
+
+    def create_external_sdk_tokens(self, payment_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/v2/payments/{payment_id}/create-external-sdk-tokens",
+            payload=payload,
+            use_publishable_key=True,
+        )
 
     def create_payment_method_session(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self._request(

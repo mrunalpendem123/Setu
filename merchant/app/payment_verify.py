@@ -31,6 +31,10 @@ def _merchant_id() -> str | None:
     return os.getenv("HYPERSWITCH_MERCHANT_ID")
 
 
+def _profile_id() -> str | None:
+    return os.getenv("HYPERSWITCH_PROFILE_ID")
+
+
 def _timeout_seconds() -> float:
     return float(os.getenv("HYPERSWITCH_TIMEOUT_SECONDS", "20"))
 
@@ -83,6 +87,9 @@ def verify_hyperswitch_payment(
         merchant_id = _merchant_id()
         if merchant_id:
             headers["x-merchant-id"] = merchant_id
+        profile_id = _profile_id()
+        if profile_id:
+            headers["X-Profile-Id"] = profile_id
 
         max_retries = _max_retries()
         backoff_ms = _retry_backoff_ms()
