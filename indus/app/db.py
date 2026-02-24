@@ -46,6 +46,17 @@ class PaymentRecord(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class TokenRecord(Base):
+    __tablename__ = "indus_tokens"
+
+    token = Column(String, primary_key=True)
+    session_id = Column(String, nullable=False)
+    kind = Column(String, nullable=False)
+    payload = Column(JSONB, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)
+
+
 class OrderEvent(Base):
     __tablename__ = "indus_order_events"
 

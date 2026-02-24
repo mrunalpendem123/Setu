@@ -38,16 +38,16 @@ class CheckoutSessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     items: List[ItemInput]
-    buyer: Optional[Buyer] = None
-    fulfillment_address: Optional[Address] = None
+    buyer_token: Optional[str] = None
+    fulfillment_token: Optional[str] = None
 
 
 class CheckoutSessionUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     items: Optional[List[ItemInput]] = None
-    buyer: Optional[Buyer] = None
-    fulfillment_address: Optional[Address] = None
+    buyer_token: Optional[str] = None
+    fulfillment_token: Optional[str] = None
     fulfillment_option_id: Optional[str] = None
 
 
@@ -168,8 +168,8 @@ class CheckoutSession(BaseModel):
     id: str
     status: CheckoutStatus
     currency: str = Field(min_length=3, max_length=3)
-    buyer: Optional[Buyer] = None
-    fulfillment_address: Optional[Address] = None
+    buyer_token: Optional[str] = None
+    fulfillment_token: Optional[str] = None
     line_items: List[CheckoutLineItem]
     totals: List[TotalsEntry]
     fulfillment_options: List[FulfillmentOption]

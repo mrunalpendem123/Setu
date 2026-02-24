@@ -21,6 +21,7 @@ It includes:
 - Indus Orchestrator talks to **Merchant API** for checkout/session/order.
 - Indus Orchestrator talks to **Payments Service (Rust)** for all Hyperswitch calls.
 - Merchant API verifies payment via **Payments Service** on completion.
+- Merchant API redeems **buyer/fulfillment tokens** from Indus when needed.
 
 ### Architecture Flowchart
 
@@ -32,7 +33,7 @@ flowchart LR
 
   subgraph "Indus Orchestrator Service"
     IndusAPI["Indus API (FastAPI)"]
-    IndusDB["Indus Postgres\nindus_sessions, indus_payments, indus_order_events"]
+    IndusDB["Indus Postgres\nindus_sessions, indus_payments, indus_order_events, indus_tokens"]
   end
 
   subgraph "Merchant Service"
@@ -50,6 +51,7 @@ flowchart LR
   IndusAPI -->|"Create/Update/Get/Cancel/Complete"| MerchantAPI
   IndusAPI -->|"Create Payment\n/indus/checkout/{id}/payment_intent"| Payments
   MerchantAPI -->|"Verify Payment\nGET /payments/{payment_id}"| Payments
+  MerchantAPI -->|"Redeem buyer/fulfillment token"| IndusAPI
   Payments --> Hyperswitch
   MerchantAPI -->|"Order webhook\norder.created / order.updated"| IndusAPI
 
@@ -66,6 +68,15 @@ Services:
 
 ---
 
+## Buyer + Fulfillment Tokenization
+
+- Indus stores buyer profiles and fulfillment addresses.
+- Indus issues `buyer_token` and `fulfillment_token` and sends only tokens to the merchant.
+- Merchants redeem tokens when needed via `POST /indus/tokens/{token}/redeem` (authenticated with `X-Indus-Key`).
+- Tokens expire based on `TOKEN_TTL_SECONDS` (default 24h).
+
+---
+
 ## Checkout Status Flow
 
 The checkout session status matches OpenAI Commerce conventions:
@@ -74,7 +85,7 @@ The checkout session status matches OpenAI Commerce conventions:
 not_ready_for_payment -> ready_for_payment -> completed (or canceled)
 ```
 
-`not_ready_for_payment` means fulfillment address or option is missing.
+`not_ready_for_payment` means fulfillment token or option is missing.
 
 ### Checkout Flowchart
 
@@ -96,7 +107,8 @@ sequenceDiagram
   I-->>U: "checkout_session"
 
   U->>I: "POST /indus/checkout/{id}/update\n(fulfillment_address + fulfillment_option_id)"
-  I->>M: "POST /checkout_sessions/{id}"
+  I->>IDB: "store buyer/fulfillment\nissue tokens"
+  I->>M: "POST /checkout_sessions/{id}\n(fulfillment_token + option)"
   M->>MDB: "update session + totals"
   M-->>I: "checkout_session (status: ready_for_payment)"
   I-->>U: "checkout_session"
@@ -111,6 +123,7 @@ sequenceDiagram
 
   U->>I: "POST /indus/checkout/{id}/complete\n(payment_data.token)"
   I->>M: "POST /checkout_sessions/{id}/complete"
+  M->>I: "POST /indus/tokens/{token}/redeem"
   M->>P: "GET /payments/{payment_id} (verify)"
   P->>H: "GET /payments/{payment_id}"
   H-->>P: "status/amount/currency"
@@ -125,7 +138,7 @@ sequenceDiagram
 ## Payment Flow (UPI / Cards via Hyperswitch)
 
 1. **Create checkout** (`/indus/checkout`) → returns checkout session.
-2. **Update checkout** with `fulfillment_address` + `fulfillment_option_id` → status becomes `ready_for_payment`.
+2. **Update checkout** with `fulfillment_address` + `fulfillment_option_id` → Indus issues tokens and updates the merchant with `fulfillment_token` → status becomes `ready_for_payment`.
 3. **Create payment intent** (`/indus/checkout/{id}/payment_intent`) → calls the Rust payments service → Hyperswitch.
 4. **Complete checkout** (`/indus/checkout/{id}/complete`) with `payment_data.token` → merchant verifies via the Rust payments service → Hyperswitch.
 
@@ -251,6 +264,8 @@ Set these on the **payments** service:
 ### Indus Orchestrator
 
 - `INDUS_API_KEY` – optional internal auth between Indus → Merchant
+- `MERCHANT_API_KEYS` – comma‑separated keys to authorize merchant token redemption
+- `TOKEN_TTL_SECONDS` (default `86400`) – TTL for buyer/fulfillment tokens
 - `PAYMENTS_SERVICE_URL` – URL for the Rust payments service
 - `PAYMENTS_SERVICE_TIMEOUT_SECONDS` (default `20`)
 
@@ -271,6 +286,8 @@ Hyperswitch (used only if `PAYMENTS_SERVICE_URL` is not set):
 ### Merchant API
 
 - `INDUS_API_KEYS` – comma‑separated keys to authorize Indus
+- `INDUS_BASE_URL` – Indus base URL for token redemption
+- `INDUS_API_KEY` – API key sent to Indus for token redemption
 - `PAYMENTS_SERVICE_URL` – URL for the Rust payments service
 - `PAYMENTS_SERVICE_TIMEOUT_SECONDS` (default `20`)
 - `HYPERSWITCH_BASE_URL`, `HYPERSWITCH_API_KEY`, `HYPERSWITCH_API_KEY_HEADER`, `HYPERSWITCH_MERCHANT_ID` (fallback only)
@@ -336,6 +353,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 export DATABASE_URL="postgresql+psycopg://user:pass@localhost:5432/merchant"
 export INDUS_API_KEYS=demo_key
+export INDUS_BASE_URL="http://localhost:8000"
+export INDUS_API_KEY=demo_key
 export HYPERSWITCH_API_KEY=your_key
 export MERCHANT_NAME="Demo Merchant"
 export MERCHANT_URL="https://merchant.example.com"
@@ -355,6 +374,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 export DATABASE_URL="postgresql+psycopg://user:pass@localhost:5432/indus"
 export INDUS_API_KEY=demo_key
+export MERCHANT_API_KEYS=demo_key
+export TOKEN_TTL_SECONDS=86400
 export HYPERSWITCH_API_KEY=your_key
 export HYPERSWITCH_PUBLISHABLE_KEY=your_publishable_key
 export HYPERSWITCH_ADMIN_API_KEY=your_admin_key
@@ -417,6 +438,8 @@ curl -s -X POST http://localhost:8000/indus/checkout/<SESSION_ID>/update \
     "fulfillment_option_id": "standard"
   }'
 ```
+
+Indus stores the buyer/fulfillment data and issues tokens. The merchant only receives `buyer_token` / `fulfillment_token`.
 
 ### Create payment intent
 

@@ -99,3 +99,18 @@ class CompleteCheckoutResponse(BaseModel):
     order_id: str
     status: str
     message: Optional[str] = None
+
+
+class TokenRedeemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    purpose: Optional[str] = None
+
+
+class TokenRedeemResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str
+    status: Literal["redeemed"]
+    kind: Literal["buyer", "fulfillment"]
+    payload: Dict[str, Any]

@@ -2,6 +2,7 @@
 
 This service coordinates merchant checkout sessions and Hyperswitch payments.
 It uses Postgres persistence.
+Indus stores buyer/fulfillment data and issues tokens for the merchant to redeem.
 
 ## Endpoints
 
@@ -11,6 +12,7 @@ It uses Postgres persistence.
 - `POST /indus/checkout/{id}/cancel`
 - `POST /indus/checkout/{id}/payment_intent`
 - `POST /indus/checkout/{id}/complete`
+- `POST /indus/tokens/{token}/redeem`
 - `POST /indus/payments`
 - `POST /indus/payments/{id}`
 - `POST /indus/payments/{id}/confirm`
@@ -43,6 +45,8 @@ Checkout status flow mirrors OpenAI Commerce:
 
 - `DATABASE_URL` (Postgres)
 - `INDUS_API_KEY` (token for merchant; optional)
+- `MERCHANT_API_KEYS` (comma-separated keys for token redemption)
+- `TOKEN_TTL_SECONDS` (default `86400`)
 - `LOG_LEVEL` (default `INFO`)
 - `RATE_LIMIT_ENABLED` (default `true`)
 - `RATE_LIMIT_REQUESTS` (default `60`)
@@ -87,6 +91,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 export DATABASE_URL="postgresql+psycopg://user:pass@localhost:5432/indus"
 export INDUS_API_KEY=demo_key
+export MERCHANT_API_KEYS=demo_key
+export TOKEN_TTL_SECONDS=86400
 export HYPERSWITCH_API_KEY=your_key
 uvicorn app.main:app --reload --port 8000
 ```

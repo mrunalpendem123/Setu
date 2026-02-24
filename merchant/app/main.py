@@ -32,6 +32,7 @@ from .models import (
     Link,
 )
 from .payment_verify import verify_hyperswitch_payment
+from .indus_client import IndusClient, IndusClientError
 from .security import validate_request
 from .webhooks import send_order_event
 from .rate_limit import RateLimiter
@@ -268,8 +269,8 @@ def _set_common_headers(request: Request, response: Response) -> None:
         response.headers["X-Request-Id"] = request_id
 
 
-def _status_for_session(fulfillment_address: Dict[str, Any] | None, fulfillment_option_id: str | None) -> str:
-    if not fulfillment_address:
+def _status_for_session(fulfillment_token: str | None, fulfillment_option_id: str | None) -> str:
+    if not fulfillment_token:
         return "not_ready_for_payment"
     if not fulfillment_option_id:
         return "not_ready_for_payment"
@@ -277,10 +278,10 @@ def _status_for_session(fulfillment_address: Dict[str, Any] | None, fulfillment_
 
 
 def _messages_for_status(
-    fulfillment_address: Dict[str, Any] | None,
+    fulfillment_token: str | None,
     fulfillment_option_id: str | None,
 ) -> List[Message]:
-    if not fulfillment_address:
+    if not fulfillment_token:
         return [
             Message(
                 type="info",
@@ -301,6 +302,22 @@ def _messages_for_status(
     return []
 
 
+def _redeem_token(token: str, expected_kind: str) -> Dict[str, Any]:
+    try:
+        client = IndusClient()
+        data = client.redeem_token(token, purpose="checkout")
+    except IndusClientError as exc:
+        payload = exc.payload if isinstance(exc.payload, dict) else {"message": "Indus token redeem failed"}
+        raise HTTPException(status_code=exc.status_code, detail=payload) from exc
+
+    if data.get("kind") != expected_kind:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "token_kind_mismatch", "message": "Token type does not match expected data"},
+        )
+    return data.get("payload", {})
+
+
 @app.post("/checkout_sessions")
 async def create_checkout_session(
     request: Request,
@@ -318,21 +335,26 @@ async def create_checkout_session(
     line_items = _build_line_items(payload.items)
     totals = _compute_totals(line_items, shipping_amount=0)
 
-    fulfillment_address = jsonable_encoder(payload.fulfillment_address) if payload.fulfillment_address else None
-    status = _status_for_session(fulfillment_address, None)
+    if payload.fulfillment_token:
+        _redeem_token(payload.fulfillment_token, "fulfillment")
+    if payload.buyer_token:
+        _redeem_token(payload.buyer_token, "buyer")
+
+    fulfillment_token = payload.fulfillment_token
+    status = _status_for_session(fulfillment_token, None)
     now = datetime.now(timezone.utc)
     session = CheckoutSession(
         id=f"cs_{uuid4().hex}",
         status=status,
         currency="inr",
-        buyer=payload.buyer,
-        fulfillment_address=payload.fulfillment_address,
+        buyer_token=payload.buyer_token,
+        fulfillment_token=fulfillment_token,
         line_items=line_items,
         totals=totals,
         fulfillment_options=_build_fulfillment_options(),
         fulfillment_option_id=None,
         payment_provider=_payment_provider(),
-        messages=_messages_for_status(fulfillment_address, None),
+        messages=_messages_for_status(fulfillment_token, None),
         links=_build_links(),
         created_at=now,
         updated_at=now,
@@ -384,10 +406,14 @@ async def update_checkout_session(
         if payload.items is not None:
             items = payload.items
 
-        if payload.buyer is not None:
-            session_data["buyer"] = jsonable_encoder(payload.buyer)
-        if payload.fulfillment_address is not None:
-            session_data["fulfillment_address"] = jsonable_encoder(payload.fulfillment_address)
+        if payload.buyer_token is not None:
+            _redeem_token(payload.buyer_token, "buyer")
+            session_data["buyer_token"] = payload.buyer_token
+        if payload.fulfillment_token is not None:
+            _redeem_token(payload.fulfillment_token, "fulfillment")
+            session_data["fulfillment_token"] = payload.fulfillment_token
+        session_data.pop("buyer", None)
+        session_data.pop("fulfillment_address", None)
         if payload.fulfillment_option_id is not None:
             if not _is_valid_fulfillment_option(payload.fulfillment_option_id):
                 raise HTTPException(
@@ -406,7 +432,7 @@ async def update_checkout_session(
         totals = _compute_totals(line_items, shipping_amount=shipping_amount)
 
         status = _status_for_session(
-            session_data.get("fulfillment_address"),
+            session_data.get("fulfillment_token"),
             session_data.get("fulfillment_option_id"),
         )
         now = datetime.now(timezone.utc)
@@ -421,7 +447,7 @@ async def update_checkout_session(
                 "status": status,
                 "messages": jsonable_encoder(
                     _messages_for_status(
-                        session_data.get("fulfillment_address"),
+                        session_data.get("fulfillment_token"),
                         session_data.get("fulfillment_option_id"),
                     )
                 ),
@@ -536,6 +562,20 @@ async def complete_checkout_session(
         if total_amount is None:
             raise HTTPException(status_code=500, detail={"code": "totals_missing", "message": "Totals missing"})
 
+        buyer: Dict[str, Any] | None = None
+        fulfillment_address: Dict[str, Any] | None = None
+        buyer_token = session_data.get("buyer_token")
+        fulfillment_token = session_data.get("fulfillment_token")
+        if buyer_token:
+            buyer = _redeem_token(buyer_token, "buyer")
+        if fulfillment_token:
+            fulfillment_address = _redeem_token(fulfillment_token, "fulfillment")
+        if not fulfillment_address:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "fulfillment_missing", "message": "Fulfillment address missing"},
+            )
+
         payment = payload.payment_data
         payment_currency = session_data.get("currency")
 
@@ -578,6 +618,10 @@ async def complete_checkout_session(
         )
 
         session_data["status"] = "completed"
+        if buyer:
+            session_data["buyer"] = buyer
+        if fulfillment_address:
+            session_data["fulfillment_address"] = fulfillment_address
         session_data["order"] = jsonable_encoder(order)
         session_data["updated_at"] = now.isoformat()
 

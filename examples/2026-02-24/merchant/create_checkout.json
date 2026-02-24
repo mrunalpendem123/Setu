@@ -1,4 +1,5 @@
 {
-  "items": [{"id": "item_123", "quantity": 1}],
-  "buyer": {"email": "user@example.com"}
+  "items": [{"id": "sku_hoodie", "quantity": 1}],
+  "buyer_token": "btok_example",
+  "fulfillment_token": "ftok_example"
 }

@@ -88,6 +88,23 @@ paths:
       responses:
         "200":
           description: Order created
+  /indus/tokens/{token}/redeem:
+    post:
+      summary: Redeem buyer or fulfillment token
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "../json-schema/indus_token_redeem.json"
+      responses:
+        "200":
+          description: Token redeemed
   /indus/payments:
     get:
       summary: List payments

@@ -17,6 +17,8 @@ Checkout status flow:
 
 - `not_ready_for_payment` -> `ready_for_payment` -> `completed` (or `canceled`)
 
+Checkout requests accept `buyer_token` and `fulfillment_token` issued by Indus (no raw buyer/fulfillment data).
+
 ## Auth (optional)
 
 If `INDUS_API_KEYS` is set, requests must include:
@@ -27,12 +29,19 @@ Idempotency:
 
 - `Idempotency-Key` (applies to POST requests)
 
+Token redemption (merchant -> Indus):
+
+- `POST /indus/tokens/{token}/redeem` (Indus)
+- Requires `INDUS_BASE_URL` + `INDUS_API_KEY` on the merchant
+
 ## Env Vars
 
 Core:
 
 - `DATABASE_URL` (Postgres)
 - `INDUS_API_KEYS` (comma-separated tokens)
+- `INDUS_BASE_URL` (Indus base URL for token redemption)
+- `INDUS_API_KEY` (API key sent to Indus for token redemption)
 - `LOG_LEVEL` (default `INFO`)
 - `RATE_LIMIT_ENABLED` (default `true`)
 - `RATE_LIMIT_REQUESTS` (default `60`)
@@ -98,6 +107,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 export DATABASE_URL="postgresql+psycopg://user:pass@localhost:5432/merchant"
 export INDUS_API_KEYS=demo_key
+export INDUS_BASE_URL="http://localhost:8000"
+export INDUS_API_KEY=demo_key
 export HYPERSWITCH_API_KEY=your_key
 uvicorn app.main:app --reload --port 8001
 ```

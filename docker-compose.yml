@@ -25,6 +25,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://setu:setu@postgres:5432/merchant
       INDUS_API_KEYS: demo_key
+      INDUS_BASE_URL: http://indus:8000
+      INDUS_API_KEY: demo_key
       PAYMENTS_SERVICE_URL: http://payments:9000
       MERCHANT_NAME: "Demo Merchant"
       MERCHANT_URL: "https://merchant.example.com"
@@ -46,6 +48,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://setu:setu@postgres:5432/indus
       INDUS_API_KEY: demo_key
+      MERCHANT_API_KEYS: demo_key
+      TOKEN_TTL_SECONDS: 86400
       PAYMENTS_SERVICE_URL: http://payments:9000
     ports:
       - "8000:8000"

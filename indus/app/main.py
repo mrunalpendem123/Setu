@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import logging
 
 from typing import Dict, Any
+from uuid import uuid4
 
 import base64
 import hashlib
@@ -22,13 +23,16 @@ from .models import (
     PaymentIntentResponse,
     CompleteCheckoutRequest,
     CompleteCheckoutResponse,
+    TokenRedeemRequest,
+    TokenRedeemResponse,
 )
 from .merchant_client import MerchantClient
 from .hyperswitch import HyperswitchClient, HyperswitchAPIError
 from .sarvam_client import SarvamClient, SarvamAPIError
 from .rate_limit import RateLimiter
 from .payments_client import PaymentsServiceClient, PaymentsServiceError, payments_service_enabled
-from .db import init_db, get_db, SessionRecord, PaymentRecord, OrderEvent
+from .db import init_db, get_db, SessionRecord, PaymentRecord, OrderEvent, TokenRecord
+from .security import validate_merchant_request
 
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -91,6 +95,32 @@ def _verify_webhook_signature(request: Request, body: bytes) -> None:
         raise HTTPException(status_code=401, detail="invalid_webhook_signature")
 
 
+def _token_ttl_seconds() -> int:
+    raw = os.getenv("TOKEN_TTL_SECONDS", "86400")
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 86400
+    return max(value, 60)
+
+
+def _issue_token(db, session_id: str, kind: str, payload: Dict[str, Any]) -> str:
+    token = f"{kind[:1]}tok_{uuid4().hex}"
+    now = datetime.utcnow()
+    expires_at = now + timedelta(seconds=_token_ttl_seconds())
+    db.merge(
+        TokenRecord(
+            token=token,
+            session_id=session_id,
+            kind=kind,
+            payload=payload,
+            created_at=now,
+            expires_at=expires_at,
+        )
+    )
+    return token
+
+
 @app.on_event("startup")
 def _startup() -> None:
     init_db()
@@ -100,19 +130,42 @@ def _startup() -> None:
 @app.post("/indus/checkout", response_model=IndusCheckoutResponse)
 def create_checkout(payload: IndusCreateCheckoutRequest) -> IndusCheckoutResponse:
     merchant = MerchantClient(payload.merchant_base_url)
-    merchant_payload = payload.model_dump(exclude={"merchant_base_url"}, exclude_none=True)
+    merchant_payload = payload.model_dump(
+        exclude={"merchant_base_url", "buyer", "fulfillment_address"},
+        exclude_none=True,
+    )
     session = merchant.create_checkout_session(merchant_payload)
 
     session_id = session.get("id")
     if not session_id:
         raise HTTPException(status_code=502, detail="merchant_invalid_response")
 
+    buyer_payload = jsonable_encoder(payload.buyer) if payload.buyer else None
+    fulfillment_payload = jsonable_encoder(payload.fulfillment_address) if payload.fulfillment_address else None
+
+    token_update: Dict[str, Any] = {}
+    if buyer_payload or fulfillment_payload:
+        with get_db() as db:
+            if buyer_payload:
+                token_update["buyer_token"] = _issue_token(db, session_id, "buyer", buyer_payload)
+            if fulfillment_payload:
+                token_update["fulfillment_token"] = _issue_token(db, session_id, "fulfillment", fulfillment_payload)
+            db.commit()
+
+    if token_update:
+        session = merchant.update_checkout_session(session_id, token_update)
+
     with get_db() as db:
+        session_data = dict(session)
+        if buyer_payload:
+            session_data["indus_buyer"] = buyer_payload
+        if fulfillment_payload:
+            session_data["indus_fulfillment_address"] = fulfillment_payload
         db.merge(
             SessionRecord(
                 session_id=session_id,
                 merchant_base_url=payload.merchant_base_url,
-                session_data=session,
+                session_data=session_data,
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow(),
             )
@@ -134,15 +187,36 @@ def update_checkout(
         merchant_base_url = record.merchant_base_url
 
     merchant = MerchantClient(merchant_base_url)
-    session = merchant.update_checkout_session(
-        session_id,
-        payload.model_dump(exclude_none=True),
-    )
+    payload_data = payload.model_dump(exclude_none=True)
+    buyer_payload = payload_data.pop("buyer", None)
+    fulfillment_payload = payload_data.pop("fulfillment_address", None)
+
+    token_update: Dict[str, Any] = {}
+    if buyer_payload or fulfillment_payload:
+        with get_db() as db:
+            if buyer_payload:
+                token_update["buyer_token"] = _issue_token(db, session_id, "buyer", buyer_payload)
+            if fulfillment_payload:
+                token_update["fulfillment_token"] = _issue_token(db, session_id, "fulfillment", fulfillment_payload)
+            db.commit()
+    payload_data.update(token_update)
+
+    session = merchant.update_checkout_session(session_id, payload_data)
 
     with get_db() as db:
         record = db.get(SessionRecord, session_id)
         if record:
-            record.session_data = session
+            session_data = dict(session)
+            existing = record.session_data or {}
+            if buyer_payload:
+                session_data["indus_buyer"] = buyer_payload
+            elif existing.get("indus_buyer"):
+                session_data["indus_buyer"] = existing.get("indus_buyer")
+            if fulfillment_payload:
+                session_data["indus_fulfillment_address"] = fulfillment_payload
+            elif existing.get("indus_fulfillment_address"):
+                session_data["indus_fulfillment_address"] = existing.get("indus_fulfillment_address")
+            record.session_data = session_data
             record.updated_at = datetime.utcnow()
             db.commit()
 
@@ -265,6 +339,28 @@ def complete_checkout(
         status=order.get("status", result.get("status", "unknown")),
         message=result.get("message"),
     )
+
+
+@app.post("/indus/tokens/{token}/redeem", response_model=TokenRedeemResponse)
+def redeem_token(
+    token: str,
+    request: Request,
+    payload: TokenRedeemRequest = Body(default=TokenRedeemRequest()),
+) -> TokenRedeemResponse:
+    _ = payload  # Reserved for future logging/controls.
+    validate_merchant_request(request)
+    with get_db() as db:
+        record = db.get(TokenRecord, token)
+        if not record:
+            raise HTTPException(status_code=404, detail="token_not_found")
+        if record.expires_at and record.expires_at < datetime.utcnow():
+            raise HTTPException(status_code=410, detail="token_expired")
+        return TokenRedeemResponse(
+            token=token,
+            status="redeemed",
+            kind=record.kind,  # type: ignore[arg-type]
+            payload=record.payload,
+        )
 
 
 @app.post("/indus/payments")

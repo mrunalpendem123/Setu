@@ -4,8 +4,8 @@
   "additionalProperties": false,
   "properties": {
     "items": {"type": "array"},
-    "buyer": {"type": "object"},
-    "fulfillment_address": {"type": "object"},
+    "buyer_token": {"type": "string"},
+    "fulfillment_token": {"type": "string"},
     "fulfillment_option_id": {"type": "string"}
   }
 }
