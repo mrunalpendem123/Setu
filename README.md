@@ -511,7 +511,7 @@ curl -s -X POST http://localhost:8000/indus/sarvam/proxy \
 
 ## License
 
-Apache 2.0. See `LICENSE`.
+MIT. See `LICENSE`.
 
 ## Project Files
 
