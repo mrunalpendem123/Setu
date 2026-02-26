@@ -1,33 +1,72 @@
 # Protocol Overview
 
-The Indus Commerce Protocol (ACP‑India) defines a standard, agent‑centric checkout flow for India.
-It mirrors ACP semantics and uses Hyperswitch as the payment handler.
+ACP-India (Indus Profile) is a binding of OpenAI's Agentic Commerce Protocol for India.
+
+---
 
 ## Roles
 
-- Agent: the user-facing AI app (Indus)
-- Merchant: seller and merchant of record (MoR)
-- Payment Handler: Hyperswitch (UPI + cards)
+| Role | Description | Reference implementation |
+|---|---|---|
+| **Agent** | The AI that shops on behalf of the user | Indus (`indus/`) |
+| **Merchant** | The seller and merchant of record | `merchant/` |
+| **Payment Handler** | Executes the actual payment | Hyperswitch via `payments/` |
 
-## Core Objects
+---
 
-- Checkout session (state machine)
-- Payment intent / payment token
-- Order
-- Buyer + fulfillment tokens
+## Core objects
 
-## State Model
+**Checkout session** — the cart. Owned by the merchant, orchestrated by the agent.
 
-`not_ready_for_payment -> ready_for_payment -> completed (or canceled)`
+```
+Status: not_ready_for_payment
+           ↓  (fulfillment address + option provided)
+        ready_for_payment
+           ↓  (payment verified)
+        completed
+           ↓  (or at any point)
+        canceled
+```
 
-## Tokenization
+**Payment intent** — a Hyperswitch payment. Created by Indus, verified by merchant.
 
-- Buyer and fulfillment data are owned by the agent.
-- Merchants only receive tokens and redeem them when needed.
+**Order** — created by the merchant after payment is verified.
 
-## Extensions
+**Buyer token / Fulfillment token** — opaque tokens issued by Indus. The agent's PII never leaves Indus — merchants receive tokens and redeem them when needed.
 
-- Capability negotiation
-- Payment handlers
-- Discounts and promotions
-- India-specific compliance fields
+---
+
+## Protocol bindings
+
+```
+Agent → Merchant      checkout session lifecycle (create, update, complete, cancel)
+Agent → Hyperswitch   payment intent creation and confirmation
+Merchant → Agent      token redemption (buyer data, fulfillment address)
+Merchant → Agent      webhook (order.created, order.updated)
+```
+
+---
+
+## The 4 calls
+
+```
+POST /indus/checkout                          create session + issue tokens
+POST /indus/checkout/{id}/update              update items / address / shipping option
+POST /indus/checkout/{id}/payment_intent      create Hyperswitch payment
+POST /indus/checkout/{id}/complete            verify payment + create order
+```
+
+---
+
+## Extension points
+
+The protocol is designed to be extended without breaking the core flow:
+
+| Extension | RFC |
+|---|---|
+| Capability negotiation | `rfc/capability-negotiation.md` |
+| Discounts and coupons | `rfc/discounts.md` |
+| Merchant registry | `rfc/merchant-registry.md` |
+| Agent discovery | `rfc/agent-discovery.md` |
+| Payment handler binding | `rfc/payment-handlers.md` |
+| India GST / tax fields | `docs/india-profile.md` |
