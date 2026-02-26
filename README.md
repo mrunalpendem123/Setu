@@ -6,7 +6,7 @@
 
 ## What is ACP?
 
-**Agentic Commerce Protocol (ACP)** is an open standard jointly maintained by **OpenAI and Stripe** that gives merchants a set of REST API endpoints AI agents can call to complete a purchase — instead of agents trying to navigate a web browser through a checkout form.
+**Agentic Commerce Protocol (ACP)** is an open standard that gives merchants a set of REST API endpoints AI agents can call to complete a purchase — instead of agents trying to navigate a web browser through a checkout form.
 
 Today, if an AI agent wants to buy something for you, it has to:
 - Open a browser
@@ -53,7 +53,7 @@ The **Indus Profile** — ACP with Hyperswitch as the payment handler instead of
 | Dimension | Base ACP | ACP-India (Indus Profile) |
 |---|---|---|
 | Payment handler | **Stripe** (Shared Payment Tokens) | **Hyperswitch** (UPI + cards + NetBanking) |
-| Agent | Any (OpenAI ChatGPT ships first) | **Sarvam AI** (multilingual, India-first) |
+| Agent | Any AI assistant | **Sarvam AI** (multilingual, India-first) |
 | Payment methods | Card, ACH, bank transfer | **UPI collect, UPI intent, UPI QR, cards** |
 | Address format | Generic | **Indian PIN code** + state validation |
 | Tax metadata | None in base spec | **GST** — GSTIN, HSN codes, 18% default |

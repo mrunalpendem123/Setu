@@ -1,11 +1,10 @@
 # ACP-India Profile (Indus)
 
-This document defines the **India payment handler binding** of the Agentic Commerce Protocol
-(the open standard maintained by OpenAI and Stripe).
+This document defines the **India payment handler binding** of the Agentic Commerce Protocol.
 
 It does not change the ACP state model, checkout lifecycle, or order semantics.
 It only specifies what is **required or different** when ACP runs in India — primarily
-replacing **Stripe** as the payment handler with **Hyperswitch**.
+replacing **Stripe** as the default payment handler with **Hyperswitch**.
 
 ---
 

@@ -1,7 +1,6 @@
 # Protocol Overview
 
-ACP-India (Indus Profile) is a payment handler binding for the Agentic Commerce Protocol,
-maintained by OpenAI and Stripe.
+ACP-India (Indus Profile) is India's payment handler binding for the Agentic Commerce Protocol.
 
 ---
 

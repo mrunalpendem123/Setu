@@ -37,7 +37,7 @@ Indus stores buyer/fulfillment data and issues tokens for the merchant to redeem
 - `POST /indus/sarvam/proxy`
 - `POST /webhooks/orders`
 
-Checkout status flow mirrors OpenAI Commerce:
+Checkout session state machine (ACP):
 
 - `not_ready_for_payment` -> `ready_for_payment` -> `completed` (or `canceled`)
 
