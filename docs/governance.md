@@ -8,7 +8,7 @@ This project uses a lightweight maintainer-driven governance model.
 
 ## Decision Making
 - Minor changes: maintainer approval.
-- Major changes: use the SEP process (see `docs/sep-guidelines.md`).
+- Major changes: open an issue describing the proposal before submitting a PR.
 
 ## Contacts
 See `MAINTAINERS.md`.
