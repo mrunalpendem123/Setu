@@ -1,66 +1,91 @@
 # Protocol Overview
 
-ACP-India (Indus Profile) is a binding of OpenAI's Agentic Commerce Protocol for India.
+ACP-India (Indus Profile) is a payment handler binding for the Agentic Commerce Protocol,
+maintained by OpenAI and Stripe.
 
 ---
 
-## Roles
+## Roles (from base ACP)
 
-| Role | Description | Reference implementation |
+| Role | What they do | In this repo |
 |---|---|---|
-| **Agent** | The AI that shops on behalf of the user | Indus (`indus/`) |
-| **Merchant** | The seller and merchant of record | `merchant/` |
-| **Payment Handler** | Executes the actual payment | Hyperswitch via `payments/` |
+| **Buyer** | The human. Approves purchases through the agent's UI | — |
+| **Agent** | The AI. Calls merchant APIs, manages session state, renders checkout UI | `indus/` |
+| **Merchant** | Implements the 5 ACP endpoints. Stays merchant of record. | `merchant/` |
+| **Payment Handler** | Issues scoped one-time tokens. Processes the actual charge. | Hyperswitch via `payments/` |
+
+The agent never navigates a website. The merchant never handles raw card data. The payment handler never knows about the session — it just issues a token with allowance constraints.
 
 ---
 
-## Core objects
-
-**Checkout session** — the cart. Owned by the merchant, orchestrated by the agent.
+## Session states (identical to base ACP)
 
 ```
-Status: not_ready_for_payment
-           ↓  (fulfillment address + option provided)
-        ready_for_payment
-           ↓  (payment verified)
-        completed
-           ↓  (or at any point)
-        canceled
-```
+not_ready_for_payment   ← fulfillment option not yet selected
+        ↓  update with fulfillment_option_id
+ready_for_payment       ← all required fields present
+        ↓  complete with payment token
+in_progress             ← payment is being processed
+        ↓
+completed               ← order created (terminal)
 
-**Payment intent** — a Hyperswitch payment. Created by Indus, verified by merchant.
-
-**Order** — created by the merchant after payment is verified.
-
-**Buyer token / Fulfillment token** — opaque tokens issued by Indus. The agent's PII never leaves Indus — merchants receive tokens and redeem them when needed.
-
----
-
-## Protocol bindings
-
-```
-Agent → Merchant      checkout session lifecycle (create, update, complete, cancel)
-Agent → Hyperswitch   payment intent creation and confirmation
-Merchant → Agent      token redemption (buyer data, fulfillment address)
-Merchant → Agent      webhook (order.created, order.updated)
+any state → cancel → canceled (terminal)
 ```
 
 ---
 
-## The 4 calls
+## The 5 ACP endpoints (what every merchant must implement)
 
 ```
-POST /indus/checkout                          create session + issue tokens
-POST /indus/checkout/{id}/update              update items / address / shipping option
-POST /indus/checkout/{id}/payment_intent      create Hyperswitch payment
-POST /indus/checkout/{id}/complete            verify payment + create order
+POST   /checkout_sessions           create session
+GET    /checkout_sessions/{id}      retrieve session
+POST   /checkout_sessions/{id}      update session (shipping, items, coupons)
+POST   /checkout_sessions/{id}/complete   pay + create order
+POST   /checkout_sessions/{id}/cancel     cancel session
 ```
+
+---
+
+## Delegated payment — how the token works
+
+ACP's security model: the agent never passes raw card data to the merchant.
+
+```
+1. Agent → PSP:  POST /agentic_commerce/delegate_payment
+                 { payment_method, allowance: { amount, currency, expires_at }, risk_signals }
+
+2. PSP → Agent:  { id: "dpt_xyz" }   ← a scoped token
+
+3. Agent → Merchant: POST /checkout_sessions/{id}/complete
+                     { payment_handler_id: "hyperswitch.upi", payment_token: "dpt_xyz" }
+
+4. Merchant → PSP:   charge using dpt_xyz internally
+
+Token constraints enforced by PSP:
+  - amount_cents: cannot charge more than allowed
+  - one_time: cannot be reused
+  - expires_at: invalid after expiry
+```
+
+In base ACP, the PSP is **Stripe** (Shared Payment Tokens).
+In the Indus Profile, the PSP is **Hyperswitch**.
+
+---
+
+## What the Indus Profile adds
+
+- `payment_handler_id: "hyperswitch.upi"` — UPI as a first-class payment method
+- UPI sub-types: `upi_collect`, `upi_intent`, `upi_qr`
+- `requires_customer_action` as a valid pending state (user approving on phone)
+- Indian address validation (PIN code, country=IN, +91 phone)
+- GST metadata on line items (HSN codes, GSTIN, tax rate)
+- Sarvam AI endpoints for multilingual checkout assist
+- Merchant registry (`/indus/merchants`)
+- Capability negotiation endpoint (`/indus/capabilities`)
 
 ---
 
 ## Extension points
-
-The protocol is designed to be extended without breaking the core flow:
 
 | Extension | RFC |
 |---|---|
@@ -69,4 +94,3 @@ The protocol is designed to be extended without breaking the core flow:
 | Merchant registry | `rfc/merchant-registry.md` |
 | Agent discovery | `rfc/agent-discovery.md` |
 | Payment handler binding | `rfc/payment-handlers.md` |
-| India GST / tax fields | `docs/india-profile.md` |
