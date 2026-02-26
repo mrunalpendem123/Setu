@@ -1,12 +1,14 @@
-# ACP-India — The Indus Profile
+# Setu
 
-> India's payment handler binding for the [Agentic Commerce Protocol](https://www.agenticcommerce.dev/).
+> An open protocol for AI agents to complete purchases in India — without navigating a browser.
 
 ---
 
-## What is ACP?
+## What is Setu?
 
-**Agentic Commerce Protocol (ACP)** is an open standard that gives merchants a set of REST API endpoints AI agents can call to complete a purchase — instead of agents trying to navigate a web browser through a checkout form.
+**Setu** is an agentic commerce protocol for India.
+
+It gives merchants a set of REST API endpoints that AI agents can call to complete a purchase — instead of agents trying to navigate a web browser through a checkout form.
 
 Today, if an AI agent wants to buy something for you, it has to:
 - Open a browser
@@ -15,51 +17,47 @@ Today, if an AI agent wants to buy something for you, it has to:
 - Handle payment redirects
 - Hope nothing breaks mid-flow
 
-**ACP replaces all of that.** A merchant implements 5 API endpoints. An agent calls them in sequence. The purchase is done.
+**Setu replaces all of that.** A merchant implements 5 API endpoints. An agent calls them in sequence. The purchase is done.
 
 ```
-Agent → POST /checkout_sessions          (create cart)
-Agent → POST /checkout_sessions/{id}     (select shipping)
-Agent → POST /delegate_payment           (get a one-time payment token from PSP)
-Agent → POST /checkout_sessions/{id}/complete   (pay + confirm order)
+Agent → POST /checkout_sessions                   (create cart)
+Agent → POST /checkout_sessions/{id}              (select shipping)
+Agent → POST /delegate_payment                    (get a one-time payment token)
+Agent → POST /checkout_sessions/{id}/complete     (pay + confirm order)
 ```
 
-The **human still approves** — through the agent's UI, not through a merchant's website form. The **merchant stays merchant of record**. The **PSP (Stripe) issues a scoped token** that can only charge the exact amount, in the exact currency, once.
+The **human still approves** — through the agent's UI, not through a merchant's website. The **merchant stays merchant of record**. The **payment token is scoped** — it can only charge the exact amount, in the exact currency, once.
 
 ---
 
-## The problem with ACP in India
+## Why India needs its own protocol
 
-ACP's payment handler model is built around **Stripe's Shared Payment Tokens (SPTs)**.
+Existing agentic commerce flows are built around western payment rails — cards and bank transfers via Stripe.
 
 India's payment reality is different:
 
 | Reality | Why it matters |
 |---|---|
-| **70%+ of digital payments are UPI** | Stripe doesn't natively handle UPI collect/intent/QR the way Indian PSPs do |
-| **Hyperswitch supports all Indian rails** | UPI, RuPay, NetBanking, cards — via a single API |
+| **70%+ of digital payments are UPI** | Generic payment handlers don't support UPI collect / intent / QR natively |
+| **Hyperswitch covers all Indian rails** | UPI, RuPay, NetBanking, cards — one API |
 | **Sarvam AI speaks Indian languages** | Hindi, Tamil, Telugu, Kannada — buyers don't always shop in English |
-| **GST is mandatory on B2B** | Line items need HSN codes + GSTIN, not just a total |
+| **GST is mandatory on B2B** | Line items need HSN codes + GSTIN, not just a subtotal |
 | **PIN codes have strict formats** | `^[1-9][0-9]{5}$` — generic address models fail silently |
 
-**ACP has no India binding. This repo proposes one.**
+**Setu is built for this stack from the ground up.**
 
 ---
 
-## What this repo proposes
+## What Setu defines
 
-The **Indus Profile** — ACP with Hyperswitch as the payment handler instead of Stripe, and Sarvam AI as the agent layer.
-
-| Dimension | Base ACP | ACP-India (Indus Profile) |
-|---|---|---|
-| Payment handler | **Stripe** (Shared Payment Tokens) | **Hyperswitch** (UPI + cards + NetBanking) |
-| Agent | Any AI assistant | **Sarvam AI** (multilingual, India-first) |
-| Payment methods | Card, ACH, bank transfer | **UPI collect, UPI intent, UPI QR, cards** |
-| Address format | Generic | **Indian PIN code** + state validation |
-| Tax metadata | None in base spec | **GST** — GSTIN, HSN codes, 18% default |
-| Currency | Any (USD default in examples) | **INR in paise** |
-
-Everything else is **identical to base ACP**: session state machine, token lifecycle, order model, capability negotiation, idempotency, webhook shape.
+| Dimension | Setu |
+|---|---|
+| Payment handler | **Hyperswitch** (UPI + cards + NetBanking) |
+| Agent layer | **Sarvam AI** (multilingual, India-first) |
+| Payment methods | **UPI collect, UPI intent, UPI QR, cards** |
+| Address format | **Indian PIN code** + state validation |
+| Tax metadata | **GST** — GSTIN, HSN codes, 18% default |
+| Currency | **INR in paise** |
 
 ---
 
@@ -84,7 +82,7 @@ The **spec, rfc, docs, and examples are the protocol**. The code proves it works
 
 ---
 
-## How the protocol flow works
+## How the flow works
 
 ### Step 1 — Agent creates a checkout session
 
@@ -138,7 +136,7 @@ Merchant calls Hyperswitch internally → verifies → creates order
 Merchant responds: { order_id: "ord_123", status: "completed" }
 ```
 
-That's the whole flow. **4 API calls. No browser. No form. No redirect.**
+**4 API calls. No browser. No form. No redirect.**
 
 ---
 
@@ -171,7 +169,7 @@ That's the whole flow. **4 API calls. No browser. No form. No redirect.**
 ```jsonc
 {
   "gst_metadata": {
-    "hsn_code": "85183000",    // headphones
+    "hsn_code": "85183000",
     "tax_label": "GST",
     "tax_rate_pct": 18.0
   }
