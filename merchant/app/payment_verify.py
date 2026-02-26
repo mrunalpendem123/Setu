@@ -48,7 +48,10 @@ def _retry_backoff_ms() -> int:
 
 
 def _accepted_statuses() -> Set[str]:
-    raw = os.getenv("HYPERSWITCH_ACCEPTED_STATUSES", "succeeded,processing,requires_capture")
+    raw = os.getenv(
+        "HYPERSWITCH_ACCEPTED_STATUSES",
+        "succeeded,processing,requires_capture,requires_customer_action",
+    )
     return {value.strip() for value in raw.split(",") if value.strip()}
 
 
@@ -122,6 +125,9 @@ def verify_hyperswitch_payment(
         return False, "amount_mismatch"
     if returned_currency and returned_currency.lower() != currency.lower():
         return False, "currency_mismatch"
+
+    if status == "requires_customer_action":
+        return True, "pending_customer_action"
 
     if status not in _accepted_statuses():
         return False, f"unexpected_status:{status}"

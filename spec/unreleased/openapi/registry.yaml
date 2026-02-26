@@ -1,0 +1,35 @@
+openapi: 3.1.0
+info:
+  title: Merchant Registry API
+  version: unreleased
+paths:
+  /registry/merchants:
+    get:
+      summary: List merchants
+      responses:
+        "200":
+          description: Merchant list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  merchants:
+                    type: array
+                    items:
+                      $ref: "../json-schema/merchant_registry_entry.json"
+  /registry/merchants/{merchant_id}:
+    get:
+      summary: Get merchant
+      parameters:
+        - name: merchant_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Merchant
+          content:
+            application/json:
+              schema:
+                $ref: "../json-schema/merchant_registry_entry.json"

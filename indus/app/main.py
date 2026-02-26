@@ -33,6 +33,8 @@ from .rate_limit import RateLimiter
 from .payments_client import PaymentsServiceClient, PaymentsServiceError, payments_service_enabled
 from .db import init_db, get_db, SessionRecord, PaymentRecord, OrderEvent, TokenRecord
 from .security import validate_merchant_request
+from .capabilities import get_indus_capabilities
+from .registry import MerchantRecord, MerchantRegisterRequest, MerchantResponse, init_registry
 
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -124,6 +126,7 @@ def _issue_token(db, session_id: str, kind: str, payload: Dict[str, Any]) -> str
 @app.on_event("startup")
 def _startup() -> None:
     init_db()
+    init_registry()
     logger.info("indus_startup")
 
 
@@ -725,9 +728,145 @@ def hyperswitch_create_api_key(
 
 @app.post("/indus/sarvam/proxy")
 def sarvam_proxy(payload: Dict[str, Any]) -> Dict[str, Any]:
-    client = SarvamClient()
+    try:
+        client = SarvamClient()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail={"code": "sarvam_unavailable", "message": str(exc)}) from exc
     try:
         return client.request(payload)
+    except SarvamAPIError as exc:
+        _raise_sarvam_error(exc)
+
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok", "service": "indus", "version": "1.0.0"}
+
+
+@app.get("/indus/capabilities")
+def indus_capabilities() -> dict:
+    return get_indus_capabilities()
+
+
+@app.post("/indus/merchants")
+def register_merchant(payload: MerchantRegisterRequest) -> MerchantResponse:
+    merchant_id = f"m_{uuid4().hex}"
+    now = datetime.utcnow()
+    record = MerchantRecord(
+        id=merchant_id,
+        name=payload.name,
+        base_url=payload.base_url,
+        product_feed_url=payload.product_feed_url,
+        created_at=now,
+    )
+    with get_db() as db:
+        db.add(record)
+        db.commit()
+    return MerchantResponse(
+        id=merchant_id,
+        name=payload.name,
+        base_url=payload.base_url,
+        product_feed_url=payload.product_feed_url,
+        created_at=now,
+    )
+
+
+@app.get("/indus/merchants")
+def list_merchants() -> list:
+    with get_db() as db:
+        records = db.query(MerchantRecord).all()
+        return [
+            {
+                "id": r.id,
+                "name": r.name,
+                "base_url": r.base_url,
+                "product_feed_url": r.product_feed_url,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in records
+        ]
+
+
+@app.get("/indus/merchants/{merchant_id}")
+def get_merchant(merchant_id: str) -> dict:
+    with get_db() as db:
+        record = db.get(MerchantRecord, merchant_id)
+        if not record:
+            raise HTTPException(status_code=404, detail={"code": "merchant_not_found", "message": "Merchant not found"})
+        return {
+            "id": record.id,
+            "name": record.name,
+            "base_url": record.base_url,
+            "product_feed_url": record.product_feed_url,
+            "created_at": record.created_at.isoformat() if record.created_at else None,
+        }
+
+
+@app.post("/indus/sarvam/product_search")
+def sarvam_product_search(payload: Dict[str, Any]) -> Dict[str, Any]:
+    query = payload.get("query", "")
+    language = payload.get("language", "en")
+    merchant_base_url = payload.get("merchant_base_url", "")
+
+    if not query:
+        raise HTTPException(status_code=400, detail={"code": "missing_query", "message": "query is required"})
+
+    try:
+        client = SarvamClient()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail={"code": "sarvam_unavailable", "message": str(exc)}) from exc
+
+    sarvam_payload = {
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    f"You are a product search assistant for an Indian e-commerce store. "
+                    f"The merchant is at {merchant_base_url}. "
+                    f"Respond in language: {language}."
+                ),
+            },
+            {"role": "user", "content": query},
+        ],
+        "model": "sarvam-2b",
+    }
+    try:
+        return client.request(sarvam_payload)
+    except SarvamAPIError as exc:
+        _raise_sarvam_error(exc)
+
+
+@app.post("/indus/sarvam/checkout_assist")
+def sarvam_checkout_assist(payload: Dict[str, Any]) -> Dict[str, Any]:
+    session_id = payload.get("session_id", "")
+    user_message = payload.get("user_message", "")
+    language = payload.get("language", "hi")
+
+    if not user_message:
+        raise HTTPException(status_code=400, detail={"code": "missing_message", "message": "user_message is required"})
+
+    try:
+        client = SarvamClient()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail={"code": "sarvam_unavailable", "message": str(exc)}) from exc
+
+    sarvam_payload = {
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    f"You are a checkout assistant helping an Indian shopper complete their purchase. "
+                    f"Session ID: {session_id}. "
+                    f"Help with address collection, option selection, and payment questions. "
+                    f"Respond in language: {language}."
+                ),
+            },
+            {"role": "user", "content": user_message},
+        ],
+        "model": "sarvam-2b",
+    }
+    try:
+        return client.request(sarvam_payload)
     except SarvamAPIError as exc:
         _raise_sarvam_error(exc)
 

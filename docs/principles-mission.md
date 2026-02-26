@@ -1,7 +1,7 @@
 # Principles & Mission
 
 ## Mission
-Build a production-grade, Indus-native checkout stack for India that is compatible with agentic commerce flows.
+Define and maintain an ACP‑compatible commerce protocol for India, with Hyperswitch as the default payment handler and Indus as the reference agent implementation.
 
 ## Principles
 - **Merchant of Record**: merchants remain MoR at all times.

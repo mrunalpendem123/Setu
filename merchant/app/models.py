@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Literal
 
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 
 
 class Address(BaseModel):
@@ -17,6 +18,36 @@ class Address(BaseModel):
     country: str = Field(min_length=2, max_length=2)
     postal_code: str
     phone_number: Optional[str] = None
+
+    @field_validator("country")
+    @classmethod
+    def country_must_be_india(cls, v: str) -> str:
+        if v.upper() != "IN":
+            raise ValueError("country must be 'IN' for India")
+        return v.upper()
+
+    @field_validator("postal_code")
+    @classmethod
+    def validate_pin_code(cls, v: str) -> str:
+        if not re.match(r"^[1-9][0-9]{5}$", v):
+            raise ValueError("postal_code must be a valid 6-digit Indian PIN code")
+        return v
+
+    @field_validator("phone_number")
+    @classmethod
+    def validate_phone_number(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not re.match(r"^\+91[6-9]\d{9}$", v):
+            raise ValueError("phone_number must be a valid Indian mobile number in E.164 format (+91XXXXXXXXXX)")
+        return v
+
+
+class GSTMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    gstin: Optional[str] = None
+    hsn_code: Optional[str] = None
+    tax_label: str = "GST"
+    tax_rate_pct: float = 18.0
 
 
 class Buyer(BaseModel):
@@ -49,6 +80,7 @@ class CheckoutSessionUpdateRequest(BaseModel):
     buyer_token: Optional[str] = None
     fulfillment_token: Optional[str] = None
     fulfillment_option_id: Optional[str] = None
+    coupon_code: Optional[str] = None
 
 
 class PaymentData(BaseModel):
@@ -90,6 +122,7 @@ class CheckoutLineItem(BaseModel):
     subtotal: int = Field(ge=0)
     tax: int = Field(ge=0)
     total: int = Field(ge=0)
+    gst_metadata: Optional[GSTMetadata] = None
 
 
 TotalType = Literal[
@@ -180,6 +213,7 @@ class CheckoutSession(BaseModel):
     created_at: datetime
     updated_at: datetime
     order: Optional[Dict[str, Any]] = None
+    gst_metadata: Optional[GSTMetadata] = None
 
 
 class OrderSummary(BaseModel):

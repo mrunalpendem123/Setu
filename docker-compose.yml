@@ -3,10 +3,10 @@ version: "3.9"
 services:
   postgres:
     image: postgres:15
-    container_name: setu-postgres
+    container_name: indus-postgres
     environment:
-      POSTGRES_USER: setu
-      POSTGRES_PASSWORD: setu
+      POSTGRES_USER: indus
+      POSTGRES_PASSWORD: indus
       POSTGRES_DB: postgres
     ports:
       - "5432:5432"
@@ -14,16 +14,16 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U setu"]
+      test: ["CMD-SHELL", "pg_isready -U indus"]
       interval: 5s
       timeout: 5s
       retries: 5
 
   merchant:
     build: ./merchant
-    container_name: setu-merchant
+    container_name: indus-merchant
     environment:
-      DATABASE_URL: postgresql+psycopg://setu:setu@postgres:5432/merchant
+      DATABASE_URL: postgresql+psycopg://indus:indus@postgres:5432/merchant
       INDUS_API_KEYS: demo_key
       INDUS_BASE_URL: http://indus:8000
       INDUS_API_KEY: demo_key
@@ -34,6 +34,8 @@ services:
       MERCHANT_TOS_URL: "https://merchant.example.com/terms"
       MERCHANT_SUPPORT_URL: "https://merchant.example.com/support"
       MERCHANT_BRAND: "Demo Brand"
+      HYPERSWITCH_API_KEY: ${HYPERSWITCH_API_KEY:-}
+      HYPERSWITCH_BASE_URL: ${HYPERSWITCH_BASE_URL:-https://sandbox.hyperswitch.io}
     ports:
       - "8001:8001"
     depends_on:
@@ -44,13 +46,21 @@ services:
 
   indus:
     build: ./indus
-    container_name: setu-indus
+    container_name: indus-service
     environment:
-      DATABASE_URL: postgresql+psycopg://setu:setu@postgres:5432/indus
+      DATABASE_URL: postgresql+psycopg://indus:indus@postgres:5432/indus
       INDUS_API_KEY: demo_key
       MERCHANT_API_KEYS: demo_key
       TOKEN_TTL_SECONDS: 86400
       PAYMENTS_SERVICE_URL: http://payments:9000
+      HYPERSWITCH_API_KEY: ${HYPERSWITCH_API_KEY:-}
+      HYPERSWITCH_PUBLISHABLE_KEY: ${HYPERSWITCH_PUBLISHABLE_KEY:-}
+      HYPERSWITCH_ADMIN_API_KEY: ${HYPERSWITCH_ADMIN_API_KEY:-}
+      HYPERSWITCH_VAULT_API_KEY: ${HYPERSWITCH_VAULT_API_KEY:-}
+      HYPERSWITCH_BASE_URL: ${HYPERSWITCH_BASE_URL:-https://sandbox.hyperswitch.io}
+      SARVAM_API_KEY: ${SARVAM_API_KEY:-}
+      SARVAM_BASE_URL: ${SARVAM_BASE_URL:-https://api.sarvam.ai}
+      SARVAM_PROXY_PATH: ${SARVAM_PROXY_PATH:-/v1/chat/completions}
     ports:
       - "8000:8000"
     depends_on:
@@ -61,7 +71,7 @@ services:
 
   payments:
     build: ./payments
-    container_name: setu-payments
+    container_name: indus-payments
     environment:
       HYPERSWITCH_API_KEY: ${HYPERSWITCH_API_KEY}
       HYPERSWITCH_PUBLISHABLE_KEY: ${HYPERSWITCH_PUBLISHABLE_KEY}
@@ -71,6 +81,19 @@ services:
       HYPERSWITCH_BASE_URL: ${HYPERSWITCH_BASE_URL:-https://sandbox.hyperswitch.io}
     ports:
       - "9000:9000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  psp:
+    build: ./psp
+    container_name: indus-psp
+    environment:
+      ACP_API_KEYS: demo_key
+      ACP_API_VERSION: "2025-09-29"
+      DATABASE_URL: postgresql+psycopg://indus:indus@postgres:5432/psp
+    ports:
+      - "8002:8002"
     depends_on:
       postgres:
         condition: service_healthy

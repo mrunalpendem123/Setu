@@ -12,6 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .catalog import get_item
+from .discounts import apply_coupon, get_coupon
 from .feed import build_product_feed, render_product_feed
 from .db import init_db, get_db, CheckoutSessionModel, OrderModel
 from .idempotency import IdempotencyStore, IdempotencyRecord
@@ -127,15 +128,18 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     return JSONResponse(content=payload, status_code=422)
 
 
-def _build_line_items(items: List[ItemInput]) -> List[CheckoutLineItem]:
+def _build_line_items(items: List[ItemInput], coupon_code: str | None = None) -> List[CheckoutLineItem]:
+    from .models import GSTMetadata
     line_items: List[CheckoutLineItem] = []
     for item in items:
         catalog_item = get_item(item.id)
         base_amount = catalog_item["price"] * item.quantity
-        discount = 0
+        discount = apply_coupon(coupon_code or "", base_amount) if coupon_code else 0
         subtotal = base_amount - discount
         tax = int(round(subtotal * TAX_RATE))
         total = subtotal + tax
+        hsn_code = catalog_item.get("hsn_code")
+        gst_meta = GSTMetadata(hsn_code=hsn_code) if hsn_code else None
         line_items.append(
             CheckoutLineItem(
                 id=f"li_{uuid4().hex}",
@@ -150,6 +154,7 @@ def _build_line_items(items: List[ItemInput]) -> List[CheckoutLineItem]:
                 subtotal=subtotal,
                 tax=tax,
                 total=total,
+                gst_metadata=gst_meta,
             )
         )
     return line_items
@@ -318,6 +323,21 @@ def _redeem_token(token: str, expected_kind: str) -> Dict[str, Any]:
     return data.get("payload", {})
 
 
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok", "service": "merchant", "version": "1.0.0"}
+
+
+@app.get("/capabilities")
+def capabilities() -> dict:
+    return {
+        "supported_payment_methods": ["card", "upi"],
+        "fulfillment_types": ["shipping"],
+        "currency": "inr",
+        "country": "IN",
+    }
+
+
 @app.post("/checkout_sessions")
 async def create_checkout_session(
     request: Request,
@@ -426,7 +446,20 @@ async def update_checkout_session(
                 )
             session_data["fulfillment_option_id"] = payload.fulfillment_option_id
 
-        line_items = _build_line_items(items)
+        if payload.coupon_code is not None:
+            if payload.coupon_code and not get_coupon(payload.coupon_code):
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "code": "invalid_coupon",
+                        "message": "Coupon code is invalid",
+                        "field": "coupon_code",
+                    },
+                )
+            session_data["coupon_code"] = payload.coupon_code or None
+
+        coupon_code = session_data.get("coupon_code")
+        line_items = _build_line_items(items, coupon_code=coupon_code)
         fulfillment_option_id = session_data.get("fulfillment_option_id")
         shipping_amount = _get_shipping_amount(fulfillment_option_id)
         totals = _compute_totals(line_items, shipping_amount=shipping_amount)
@@ -662,12 +695,17 @@ async def complete_checkout_session(
             },
         )
 
+        order_response = {
+            "id": session_id,
+            "status": "completed",
+            "order": jsonable_encoder(order),
+        }
         _set_common_headers(request, response)
         return _apply_idempotency(
             request,
             response,
             body,
-            session_data,
+            order_response,
             status_code=201,
             store=store,
         )
@@ -676,8 +714,11 @@ async def complete_checkout_session(
 @app.post("/orders/{order_id}/update")
 async def update_order(
     order_id: str,
-    payload: Dict[str, Any],
+    request: Request,
 ) -> JSONResponse:
+    body = await request.body()
+    validate_request(request, body)
+    payload = await request.json()
     new_status = payload.get("status")
     if not new_status:
         raise HTTPException(status_code=400, detail={"code": "missing_status", "message": "Missing status"})

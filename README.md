@@ -1,21 +1,29 @@
-# Indus Checkout + Hyperswitch (Setu)
+# Indus Commerce Protocol (ACP‑India)
 
-This repo contains a complete, working **Indus checkout orchestration** stack for India with **UPI + cards** via Hyperswitch. It is built to match the OpenAI Commerce checkout flow and status model, but **remains Indus‑native** (no ACP protocol headers or schema requirements).
+This repository defines an **ACP‑compatible commerce protocol for India**. It is the same agentic commerce model as ACP, with one deliberate change:
 
-It includes:
+- **Payments are executed via Hyperswitch (UPI + cards)** instead of Stripe.
 
-- **Indus Orchestrator** (client-facing API)
-- **Merchant API** (partner merchant MoR)
-- **Hyperswitch integration** (payments create/confirm/verify + full payment API pass‑through)
-- **Sarvam proxy integration** (optional, via configured endpoint)
-- **Product Feed** (JSON/CSV)
-- **Postgres persistence**
-- **Idempotency** support
-- **Webhooks** for order events
+Everything else (agent‑centric checkout, capability negotiation, delegated payments, status model, extension points) follows the ACP design.
+
+This repo is **protocol‑first**:
+
+- **Specs**: OpenAPI + JSON Schema in `spec/`
+- **RFCs**: design documents in `rfc/`
+- **Examples**: versioned requests in `examples/`
+- **Reference implementation** (optional): `indus/`, `merchant/`, `payments/`
 
 ---
 
-## Architecture (High Level)
+## Reference Implementation (Optional)
+
+The code in this repo is a **reference implementation** of the protocol using:
+
+- **Indus** as the agent app (Sarvam‑powered)
+- **Hyperswitch** as the payment handler
+- **Partner merchants** as MoR
+
+High‑level implementation flow:
 
 - Indus App talks to **Indus Orchestrator**.
 - Indus Orchestrator talks to **Merchant API** for checkout/session/order.
@@ -60,11 +68,40 @@ flowchart LR
   MerchantAPI --> Feed
 ```
 
-Services:
+Reference services:
 
 - `indus/` – orchestrator (client-facing)
 - `merchant/` – merchant API (MoR)
-- `psp/` – ACP delegated payment stub (unused; safe to delete if you don’t need it)
+- `psp/` – delegated payment handler stub (protocol reference)
+
+---
+
+## Protocol Scope
+
+Roles:
+
+- **Agent** (Indus app) owns the buyer profile and checkout UI
+- **Merchant** is the seller and MoR
+- **Payment Handler** is Hyperswitch (UPI + cards)
+
+Protocol bindings:
+
+- **Agent → Merchant**: checkout session lifecycle + order creation
+- **Agent → Payment Handler**: payment creation/confirmation
+- **Merchant → Agent**: token redemption (buyer + fulfillment)
+
+India profile:
+
+- UPI + cards required
+- Indian address formats (PIN code, state)
+- Hyperswitch payment handler binding
+
+Key docs:
+
+- `docs/protocol-overview.md`
+- `docs/india-profile.md`
+- `rfc/merchant-registry.md`
+- `rfc/agent-discovery.md`
 
 ---
 
@@ -192,6 +229,16 @@ See `indus/README.md` for the full list of endpoints.
 ## Repo Layout
 
 ```
+spec/
+  # OpenAPI + JSON Schema (versioned)
+rfc/
+  # Protocol RFCs
+docs/
+  # Governance, versioning, deployment
+examples/
+  # Versioned request examples
+
+# Reference implementation (optional)
 /indus
   /app
     main.py              # Indus API + payments service proxy
@@ -208,17 +255,9 @@ See `indus/README.md` for the full list of endpoints.
     models.py            # Merchant schema
     db.py                # Postgres persistence
 /psp
-  # ACP delegated payment stub (unused)
+  # Delegated payment handler stub (protocol reference)
 /payments
   # Rust payments service (Hyperswitch proxy)
-docs/
-  # Governance, versioning, deployment
-rfc/
-  # Protocol RFCs
-spec/
-  # OpenAPI + JSON Schema (versioned)
-examples/
-  # Versioned request examples
 changelog/
   # Versioned changelogs
 ```

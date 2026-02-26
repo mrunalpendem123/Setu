@@ -189,13 +189,13 @@ class HyperswitchClient:
         return self._request("GET", f"/payment_link/{payment_link_id}", use_publishable_key=True)
 
     def list_payments(self, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        return self._request("GET", "/payments/list", params=params)
+        return self._request("GET", "/payments", params=params)
 
     def external_3ds_authentication(self, payment_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self._request("POST", f"/payments/{payment_id}/3ds/authentication", payload=payload)
 
     def complete_authorize(self, payment_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self._request("POST", f"/{payment_id}/complete_authorize", payload=payload)
+        return self._request("POST", f"/payments/{payment_id}/complete_authorize", payload=payload)
 
     def update_metadata(self, payment_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self._request("POST", f"/payments/{payment_id}/update_metadata", payload=payload)
