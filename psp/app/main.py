@@ -123,7 +123,7 @@ def _apply_idempotency(request: Request, body: bytes, payload: dict, status_code
     return JSONResponse(content=payload, status_code=status_code)
 
 
-def _validate_delegate_request(payload: dict) -> tuple[int, str, datetime]:
+def _validate_delegate_request(payload: dict) -> tuple[int, str, str, str, datetime]:
     payment_method = payload.get("payment_method")
     allowance = payload.get("allowance")
     risk_signals = payload.get("risk_signals")
@@ -138,16 +138,25 @@ def _validate_delegate_request(payload: dict) -> tuple[int, str, datetime]:
     if metadata is None:
         raise HTTPException(status_code=400, detail="missing_metadata")
 
+    reason = allowance.get("reason")
     max_amount = allowance.get("max_amount")
     currency = allowance.get("currency")
+    checkout_session_id = allowance.get("checkout_session_id")
+    merchant_id = allowance.get("merchant_id")
     expires_at = allowance.get("expires_at")
 
+    if reason != "one_time":
+        raise HTTPException(status_code=400, detail="allowance_reason_must_be_one_time")
     if max_amount is None or currency is None:
         raise HTTPException(status_code=400, detail="missing_allowance_fields")
+    if not checkout_session_id:
+        raise HTTPException(status_code=400, detail="missing_allowance_checkout_session_id")
+    if not merchant_id:
+        raise HTTPException(status_code=400, detail="missing_allowance_merchant_id")
     if expires_at is None:
         expires_at = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
 
-    return int(max_amount), str(currency), _parse_iso(expires_at)
+    return int(max_amount), str(currency), str(checkout_session_id), str(merchant_id), _parse_iso(expires_at)
 
 
 @app.get("/health")
@@ -162,15 +171,17 @@ async def delegate_payment(request: Request, response: Response) -> JSONResponse
 
     payload = await request.json()
     try:
-        max_amount, currency, expires_at = _validate_delegate_request(payload)
+        max_amount, currency, checkout_session_id, merchant_id, expires_at = _validate_delegate_request(payload)
     except HTTPException as exc:
         return _error(str(exc.detail), "Invalid delegated payment request", status=exc.status_code)
 
-    token_id = f"dpt_{uuid4().hex}"
+    token_id = f"vt_{uuid4().hex}"
     record = TokenRecord(
         token_id=token_id,
         max_amount=max_amount,
         currency=currency,
+        checkout_session_id=checkout_session_id,
+        merchant_id=merchant_id,
         expires_at=expires_at,
         status="issued",
         created_at=datetime.now(timezone.utc),
@@ -181,15 +192,18 @@ async def delegate_payment(request: Request, response: Response) -> JSONResponse
 
     response_body = {
         "id": token_id,
-        "payment_token": token_id,
+        "created": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
-        "amount": max_amount,
+        "max_amount": max_amount,
         "currency": currency,
+        "checkout_session_id": checkout_session_id,
+        "merchant_id": merchant_id,
         "status": "issued",
+        "metadata": payload.get("metadata", {}),
     }
 
-    response.status_code = 200
-    return _apply_idempotency(request, body, jsonable_encoder(response_body), status_code=200)
+    response.status_code = 201
+    return _apply_idempotency(request, body, jsonable_encoder(response_body), status_code=201)
 
 
 @app.get("/agentic_commerce/delegate_payment/{token_id}")
@@ -202,8 +216,10 @@ async def get_delegate_payment(token_id: str, request: Request) -> JSONResponse:
         "id": record.token_id,
         "status": record.status,
         "expires_at": record.expires_at.isoformat().replace("+00:00", "Z"),
-        "amount": record.max_amount,
+        "max_amount": record.max_amount,
         "currency": record.currency,
+        "checkout_session_id": record.checkout_session_id,
+        "merchant_id": record.merchant_id,
     }
     return JSONResponse(content=payload, status_code=200)
 

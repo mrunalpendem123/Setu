@@ -60,6 +60,8 @@ class DelegatedPaymentToken(Base):
     token_id = Column(String, primary_key=True)
     max_amount = Column(Integer, nullable=False)
     currency = Column(String, nullable=False)
+    checkout_session_id = Column(String, nullable=False)
+    merchant_id = Column(String, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     status = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False)
@@ -72,6 +74,8 @@ class TokenRecord:
     token_id: str
     max_amount: int
     currency: str
+    checkout_session_id: str
+    merchant_id: str
     expires_at: datetime
     status: str
     created_at: datetime
@@ -84,6 +88,8 @@ def _to_record(row: DelegatedPaymentToken) -> TokenRecord:
         token_id=row.token_id,
         max_amount=row.max_amount,
         currency=row.currency,
+        checkout_session_id=row.checkout_session_id,
+        merchant_id=row.merchant_id,
         expires_at=row.expires_at,
         status=row.status,
         created_at=row.created_at,
@@ -103,6 +109,8 @@ def save_token(record: TokenRecord) -> None:
                 token_id=record.token_id,
                 max_amount=record.max_amount,
                 currency=record.currency,
+                checkout_session_id=record.checkout_session_id,
+                merchant_id=record.merchant_id,
                 expires_at=record.expires_at,
                 status=record.status,
                 created_at=record.created_at,

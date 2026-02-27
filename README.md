@@ -118,12 +118,20 @@ Merchant responds: { status: "ready_for_payment", totals: { total: 158182 } }
 Agent → POST http://hyperswitch.com/agentic_commerce/delegate_payment
 Body: {
   payment_method: { type: "upi", vpa: "raj@upi" },
-  allowance: { amount_cents: 158182, currency: "inr", expires_at: "+30min" },
-  risk_signals: { ... }
+  allowance: {
+    reason: "one_time",
+    max_amount: 158182,
+    currency: "inr",
+    checkout_session_id: "cs_abc",
+    merchant_id: "merchant_xyz",
+    expires_at: "2026-02-27T10:30:00Z"
+  },
+  risk_signals: [{ type: "card_testing", score: 0, action: "authorized" }],
+  metadata: {}
 }
 
-Hyperswitch responds: { id: "dpt_xyz", status: "issued" }
-// This token can ONLY charge ₹1581.82, once, before expiry.
+Hyperswitch responds: { id: "vt_xyz", status: "issued" }
+// This token can ONLY charge ₹1581.82, once, for this session, before expiry.
 ```
 
 ### Step 4 — Agent completes the checkout with that token

@@ -51,9 +51,21 @@ ACP's security model: the agent never passes raw card data to the merchant.
 
 ```
 1. Agent → PSP:  POST /agentic_commerce/delegate_payment
-                 { payment_method, allowance: { amount, currency, expires_at }, risk_signals }
+                 {
+                   payment_method,
+                   allowance: {
+                     reason: "one_time",
+                     max_amount: 158182,
+                     currency: "inr",
+                     checkout_session_id: "cs_abc",
+                     merchant_id: "merchant_xyz",
+                     expires_at: "..."
+                   },
+                   risk_signals: [{ type: "card_testing", score: 0, action: "authorized" }],
+                   metadata: {}
+                 }
 
-2. PSP → Agent:  { id: "dpt_xyz" }   ← a scoped token
+2. PSP → Agent:  { id: "vt_xyz", status: "issued" }   ← a scoped token
 
 3. Agent → Merchant: POST /checkout_sessions/{id}/complete
                      { payment_handler_id: "hyperswitch.upi", payment_token: "dpt_xyz" }
@@ -61,8 +73,10 @@ ACP's security model: the agent never passes raw card data to the merchant.
 4. Merchant → PSP:   charge using dpt_xyz internally
 
 Token constraints enforced by PSP:
-  - amount_cents: cannot charge more than allowed
-  - one_time: cannot be reused
+  - max_amount: cannot charge more than allowed
+  - reason "one_time": cannot be reused
+  - checkout_session_id: token is bound to a specific session
+  - merchant_id: token is bound to a specific merchant
   - expires_at: invalid after expiry
 ```
 
