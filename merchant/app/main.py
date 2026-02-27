@@ -274,6 +274,25 @@ def _set_common_headers(request: Request, response: Response) -> None:
         response.headers["X-Request-Id"] = request_id
 
 
+def _session_ttl_hours() -> int:
+    return int(os.getenv("SESSION_TTL_HOURS", "24"))
+
+
+def _session_expires_at(now: datetime) -> datetime:
+    return now + timedelta(hours=_session_ttl_hours())
+
+
+def _is_session_expired(session_data: Dict[str, Any]) -> bool:
+    expires_at_str = session_data.get("expires_at")
+    if not expires_at_str:
+        return False
+    try:
+        expires_at = datetime.fromisoformat(str(expires_at_str).replace("Z", "+00:00"))
+        return datetime.now(timezone.utc) > expires_at
+    except ValueError:
+        return False
+
+
 def _status_for_session(fulfillment_token: str | None, fulfillment_option_id: str | None) -> str:
     if not fulfillment_token:
         return "not_ready_for_payment"
@@ -367,6 +386,7 @@ async def create_checkout_session(
         id=f"cs_{uuid4().hex}",
         status=status,
         currency="inr",
+        expires_at=_session_expires_at(now),
         buyer_token=payload.buyer_token,
         fulfillment_token=fulfillment_token,
         line_items=line_items,
@@ -420,6 +440,10 @@ async def update_checkout_session(
         store = IdempotencyStore(db)
 
         session_data: Dict[str, Any] = dict(row.data)
+
+        if _is_session_expired(session_data):
+            raise HTTPException(status_code=409, detail={"code": "checkout_session_expired", "message": "Checkout session has expired"})
+
         payload = CheckoutSessionUpdateRequest.model_validate_json(body)
 
         items = _extract_items_from_session(session_data)
@@ -516,7 +540,11 @@ async def get_checkout_session(
         row = db.get(CheckoutSessionModel, session_id)
         if not row:
             raise HTTPException(status_code=404, detail={"code": "checkout_session_not_found", "message": "Checkout session not found"})
-        session_data = row.data
+        session_data = dict(row.data)
+
+    # Surface expired status dynamically without mutating DB — terminal states keep their state
+    if _is_session_expired(session_data) and session_data.get("status") not in {"completed", "canceled", "expired"}:
+        session_data["status"] = "expired"
 
     _set_common_headers(request, response)
     return JSONResponse(content=session_data, status_code=200)
@@ -540,7 +568,8 @@ async def cancel_checkout_session(
         _ = CancelSessionRequest.model_validate_json(body) if body else None
         session_data: Dict[str, Any] = dict(row.data)
 
-        if session_data.get("status") in {"completed", "canceled"}:
+        terminal = {"completed", "canceled", "expired"}
+        if session_data.get("status") in terminal or _is_session_expired(session_data):
             raise HTTPException(status_code=405, detail={"code": "checkout_session_not_cancelable", "message": "Checkout session cannot be canceled"})
 
         now = datetime.now(timezone.utc)
@@ -580,6 +609,9 @@ async def complete_checkout_session(
 
         session_data: Dict[str, Any] = dict(row.data)
         payload = CheckoutSessionCompleteRequest.model_validate_json(body)
+
+        if _is_session_expired(session_data):
+            raise HTTPException(status_code=409, detail={"code": "checkout_session_expired", "message": "Checkout session has expired"})
 
         if session_data.get("status") != "ready_for_payment":
             raise HTTPException(
@@ -622,12 +654,32 @@ async def complete_checkout_session(
         if not token:
             raise HTTPException(status_code=400, detail={"code": "missing_payment_token", "message": "Missing payment token"})
 
+        # pending_approval: merchant must review before charging (B2B / high-value orders)
+        if payment.approval_required:
+            now = datetime.now(timezone.utc)
+            session_data["status"] = "pending_approval"
+            session_data["updated_at"] = now.isoformat()
+            row.status = "pending_approval"
+            row.updated_at = now
+            row.data = session_data
+            db.commit()
+            return _apply_idempotency(request, body, session_data, status_code=200, store=store)
+
         verified, reason = verify_hyperswitch_payment(
             payment_id=token,
             amount=int(total_amount),
             currency=payment_currency or "",
         )
         if not verified:
+            if reason == "requires_3ds":
+                now = datetime.now(timezone.utc)
+                session_data["status"] = "authentication_required"
+                session_data["updated_at"] = now.isoformat()
+                row.status = "authentication_required"
+                row.updated_at = now
+                row.data = session_data
+                db.commit()
+                return _apply_idempotency(request, body, session_data, status_code=200, store=store)
             raise HTTPException(status_code=400, detail={"code": "payment_not_verified", "message": f"Payment not verified: {reason}"})
 
         log_event(

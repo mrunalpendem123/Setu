@@ -17,19 +17,30 @@ The agent never navigates a website. The merchant never handles raw card data. T
 
 ---
 
-## Session states (identical to base ACP)
+## Session states
 
 ```
-not_ready_for_payment   ← fulfillment option not yet selected
+not_ready_for_payment     ← created; fulfillment option not yet selected
         ↓  update with fulfillment_option_id
-ready_for_payment       ← all required fields present
+ready_for_payment         ← all required fields present
         ↓  complete with payment token
-in_progress             ← payment is being processed
-        ↓
-completed               ← order created (terminal)
+        │
+        ├─ approval_required=true ──→ pending_approval    ← awaiting merchant review
+        │                                    ↓  merchant approves (webhook/poll)
+        │                             ready_for_payment
+        │
+        ├─ 3DS needed ──────────────→ authentication_required  ← agent collects 3DS result
+        │                                    ↓  re-submit with authentication_result
+        │                             ready_for_payment
+        │
+        └─────────────────────────→ completed             ← order created (terminal)
 
-any state → cancel → canceled (terminal)
+any non-terminal state → cancel → canceled  (terminal)
+session TTL elapsed    → expired             (terminal, surfaced on read)
 ```
+
+**Terminal states**: `completed`, `canceled`, `expired` — no further transitions allowed.
+**Blocking states**: `pending_approval`, `authentication_required` — session stays open, agent waits or re-submits.
 
 ---
 

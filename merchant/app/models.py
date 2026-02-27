@@ -89,6 +89,7 @@ class PaymentData(BaseModel):
     provider: Literal["hyperswitch"]
     token: str
     billing_address: Optional[Address] = None
+    approval_required: bool = False
 
 
 class CheckoutSessionCompleteRequest(BaseModel):
@@ -190,8 +191,11 @@ class PaymentProvider(BaseModel):
 CheckoutStatus = Literal[
     "not_ready_for_payment",
     "ready_for_payment",
+    "authentication_required",
+    "pending_approval",
     "completed",
     "canceled",
+    "expired",
 ]
 
 
@@ -212,6 +216,7 @@ class CheckoutSession(BaseModel):
     links: List[Link]
     created_at: datetime
     updated_at: datetime
+    expires_at: Optional[datetime] = None
     order: Optional[Dict[str, Any]] = None
     gst_metadata: Optional[GSTMetadata] = None
 

@@ -11,7 +11,12 @@
       "properties": {
         "provider": {"type": "string"},
         "token": {"type": "string"},
-        "billing_address": {"type": "object"}
+        "billing_address": {"type": "object"},
+        "approval_required": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, the merchant must review before charging. Session transitions to pending_approval instead of completing immediately."
+        }
       }
     }
   }

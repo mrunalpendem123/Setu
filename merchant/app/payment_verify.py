@@ -129,6 +129,10 @@ def verify_hyperswitch_payment(
     if status == "requires_customer_action":
         return True, "pending_customer_action"
 
+    # Card 3DS — agent must collect authentication result before re-submitting
+    if status == "requires_authentication":
+        return False, "requires_3ds"
+
     if status not in _accepted_statuses():
         return False, f"unexpected_status:{status}"
 
