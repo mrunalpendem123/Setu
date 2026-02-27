@@ -55,6 +55,28 @@ class ItemInput(BaseModel):
     quantity: int = Field(ge=1)
 
 
+class PaymentHandlerDeclaration(BaseModel):
+    """A payment handler the agent declares it can use."""
+    model_config = ConfigDict(extra="allow")
+
+    id: str                              # reverse-DNS: "com.hyperswitch.upi"
+    version: str                         # "2026-02-24"
+    psp: str                             # "hyperswitch"
+    requires_delegate_payment: bool = True
+    requires_pci_compliance: bool = False
+
+
+class AgentCapabilities(BaseModel):
+    """What this agent supports — sent in checkout create so the merchant can negotiate."""
+    model_config = ConfigDict(extra="allow")
+
+    payment_methods: List[str] = []      # ["card", "upi_collect", "upi_intent", "upi_qr"]
+    payment_handlers: List[PaymentHandlerDeclaration] = []
+    extensions: List[str] = []          # ["india_gst", "upi_vpa", "discounts"]
+    locale: Optional[str] = None        # "hi-IN", "en-IN"
+    timezone: Optional[str] = None      # "Asia/Kolkata"
+
+
 class IndusCreateCheckoutRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -62,6 +84,7 @@ class IndusCreateCheckoutRequest(BaseModel):
     items: List[ItemInput]
     buyer: Optional[Buyer] = None
     fulfillment_address: Optional[Address] = None
+    capabilities: Optional[AgentCapabilities] = None
 
 
 class IndusUpdateCheckoutRequest(BaseModel):

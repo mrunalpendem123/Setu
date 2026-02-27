@@ -65,12 +65,46 @@ class ItemInput(BaseModel):
     quantity: int = Field(ge=1)
 
 
+class PaymentHandlerDeclaration(BaseModel):
+    """A payment handler declared by the agent or supported by the merchant."""
+    model_config = ConfigDict(extra="allow")
+
+    id: str                             # reverse-DNS: "com.hyperswitch.upi"
+    version: str                        # "2026-02-24"
+    psp: str                            # "hyperswitch"
+    requires_delegate_payment: bool = True
+    requires_pci_compliance: bool = False
+
+
+class AgentCapabilities(BaseModel):
+    """Capabilities declared by the agent in the checkout create request."""
+    model_config = ConfigDict(extra="allow")
+
+    payment_methods: List[str] = []     # ["card", "upi_collect", "upi_intent", "upi_qr"]
+    payment_handlers: List[PaymentHandlerDeclaration] = []
+    extensions: List[str] = []         # ["india_gst", "upi_vpa", "discounts"]
+    locale: Optional[str] = None       # "hi-IN", "en-IN"
+    timezone: Optional[str] = None     # "Asia/Kolkata"
+
+
+class NegotiatedCapabilities(BaseModel):
+    """Capabilities returned by the merchant after intersecting with agent declaration."""
+    model_config = ConfigDict(extra="forbid")
+
+    payment_methods: List[str]
+    payment_handlers: List[PaymentHandlerDeclaration]
+    extensions: List[str]
+    locale: Optional[str] = None
+    timezone: Optional[str] = None
+
+
 class CheckoutSessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     items: List[ItemInput]
     buyer_token: Optional[str] = None
     fulfillment_token: Optional[str] = None
+    capabilities: Optional[AgentCapabilities] = None
 
 
 class CheckoutSessionUpdateRequest(BaseModel):
@@ -217,6 +251,7 @@ class CheckoutSession(BaseModel):
     created_at: datetime
     updated_at: datetime
     expires_at: Optional[datetime] = None
+    negotiated_capabilities: Optional[NegotiatedCapabilities] = None
     order: Optional[Dict[str, Any]] = None
     gst_metadata: Optional[GSTMetadata] = None
 

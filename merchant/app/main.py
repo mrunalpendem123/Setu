@@ -31,6 +31,9 @@ from .models import (
     ItemInput,
     PaymentProvider,
     Link,
+    AgentCapabilities,
+    PaymentHandlerDeclaration,
+    NegotiatedCapabilities,
 )
 from .payment_verify import verify_hyperswitch_payment
 from .indus_client import IndusClient, IndusClientError
@@ -65,6 +68,67 @@ FULFILLMENT_OPTION_TEMPLATES = [
 ]
 
 SUPPORTED_PAYMENT_METHODS = ["card", "upi"]
+
+# ---------------------------------------------------------------------------
+# Capability negotiation
+# ---------------------------------------------------------------------------
+
+_MERCHANT_PAYMENT_METHODS: set = {"card", "upi", "upi_collect", "upi_intent", "upi_qr"}
+
+_MERCHANT_HANDLERS: List[PaymentHandlerDeclaration] = [
+    PaymentHandlerDeclaration(
+        id="com.hyperswitch.upi",
+        version="2026-02-24",
+        psp="hyperswitch",
+        requires_delegate_payment=True,
+        requires_pci_compliance=False,
+    ),
+    PaymentHandlerDeclaration(
+        id="com.hyperswitch.card",
+        version="2026-02-24",
+        psp="hyperswitch",
+        requires_delegate_payment=True,
+        requires_pci_compliance=True,
+    ),
+]
+
+_MERCHANT_EXTENSIONS: set = {"india_gst", "upi_vpa", "discounts"}
+
+
+def _negotiate_capabilities(agent: Optional[AgentCapabilities]) -> NegotiatedCapabilities:
+    """Intersect what the agent declared with what this merchant supports.
+    If agent sends no capabilities, return full merchant capabilities.
+    """
+    if agent is None or (not agent.payment_methods and not agent.payment_handlers and not agent.extensions):
+        return NegotiatedCapabilities(
+            payment_methods=sorted(_MERCHANT_PAYMENT_METHODS),
+            payment_handlers=_MERCHANT_HANDLERS,
+            extensions=sorted(_MERCHANT_EXTENSIONS),
+        )
+
+    # Intersect payment methods; fall back to all merchant methods if no overlap
+    agreed_methods = sorted(set(agent.payment_methods) & _MERCHANT_PAYMENT_METHODS)
+    if not agreed_methods:
+        agreed_methods = sorted(_MERCHANT_PAYMENT_METHODS)
+
+    # Intersect handlers by ID; fall back to all merchant handlers if no overlap
+    agent_ids = {h.id for h in agent.payment_handlers}
+    agreed_handlers = [h for h in _MERCHANT_HANDLERS if h.id in agent_ids]
+    if not agreed_handlers:
+        agreed_handlers = _MERCHANT_HANDLERS
+
+    # Intersect extensions; fall back to all merchant extensions if no overlap
+    agreed_extensions = sorted(set(agent.extensions) & _MERCHANT_EXTENSIONS)
+    if not agreed_extensions:
+        agreed_extensions = sorted(_MERCHANT_EXTENSIONS)
+
+    return NegotiatedCapabilities(
+        payment_methods=agreed_methods,
+        payment_handlers=agreed_handlers,
+        extensions=agreed_extensions,
+        locale=agent.locale,
+        timezone=agent.timezone,
+    )
 
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -398,6 +462,7 @@ async def create_checkout_session(
         links=_build_links(),
         created_at=now,
         updated_at=now,
+        negotiated_capabilities=_negotiate_capabilities(payload.capabilities),
     )
 
     with get_db() as db:

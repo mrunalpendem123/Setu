@@ -6,6 +6,38 @@
   "properties": {
     "items": {"type": "array"},
     "buyer_token": {"type": "string"},
-    "fulfillment_token": {"type": "string"}
+    "fulfillment_token": {"type": "string"},
+    "capabilities": {
+      "description": "Capabilities declared by the agent. Merchant intersects with its own support and returns negotiated_capabilities in the response.",
+      "type": "object",
+      "properties": {
+        "payment_methods": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Payment method types the agent can handle. e.g. [\"card\", \"upi_collect\", \"upi_intent\", \"upi_qr\"]"
+        },
+        "payment_handlers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "version", "psp"],
+            "properties": {
+              "id": {"type": "string", "description": "Reverse-DNS handler ID e.g. com.hyperswitch.upi"},
+              "version": {"type": "string", "description": "Handler spec version e.g. 2026-02-24"},
+              "psp": {"type": "string"},
+              "requires_delegate_payment": {"type": "boolean", "default": true},
+              "requires_pci_compliance": {"type": "boolean", "default": false}
+            }
+          }
+        },
+        "extensions": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Protocol extensions the agent supports. e.g. [\"india_gst\", \"upi_vpa\", \"discounts\"]"
+        },
+        "locale": {"type": "string", "description": "Buyer locale e.g. hi-IN"},
+        "timezone": {"type": "string", "description": "Buyer timezone e.g. Asia/Kolkata"}
+      }
+    }
   }
 }

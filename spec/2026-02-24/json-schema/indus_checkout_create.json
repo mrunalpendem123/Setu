@@ -18,6 +18,17 @@
       }
     },
     "buyer": {"type": "object"},
-    "fulfillment_address": {"type": "object"}
+    "fulfillment_address": {"type": "object"},
+    "capabilities": {
+      "description": "Agent capabilities to declare to the merchant. If omitted, Indus sends its default Setu capabilities (Hyperswitch UPI + card, india_gst, upi_vpa, discounts).",
+      "type": "object",
+      "properties": {
+        "payment_methods": {"type": "array", "items": {"type": "string"}},
+        "payment_handlers": {"type": "array", "items": {"type": "object"}},
+        "extensions": {"type": "array", "items": {"type": "string"}},
+        "locale": {"type": "string"},
+        "timezone": {"type": "string"}
+      }
+    }
   }
 }

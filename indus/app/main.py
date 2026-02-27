@@ -25,6 +25,8 @@ from .models import (
     CompleteCheckoutResponse,
     TokenRedeemRequest,
     TokenRedeemResponse,
+    AgentCapabilities,
+    PaymentHandlerDeclaration,
 )
 from .merchant_client import MerchantClient
 from .hyperswitch import HyperswitchClient, HyperswitchAPIError
@@ -97,6 +99,32 @@ def _verify_webhook_signature(request: Request, body: bytes) -> None:
         raise HTTPException(status_code=401, detail="invalid_webhook_signature")
 
 
+def _default_indus_capabilities() -> AgentCapabilities:
+    """Capabilities the Indus agent declares when the caller doesn't specify any."""
+    return AgentCapabilities(
+        payment_methods=["card", "upi_collect", "upi_intent", "upi_qr", "netbanking"],
+        payment_handlers=[
+            PaymentHandlerDeclaration(
+                id="com.hyperswitch.upi",
+                version="2026-02-24",
+                psp="hyperswitch",
+                requires_delegate_payment=True,
+                requires_pci_compliance=False,
+            ),
+            PaymentHandlerDeclaration(
+                id="com.hyperswitch.card",
+                version="2026-02-24",
+                psp="hyperswitch",
+                requires_delegate_payment=True,
+                requires_pci_compliance=True,
+            ),
+        ],
+        extensions=["india_gst", "upi_vpa", "discounts"],
+        locale="en-IN",
+        timezone="Asia/Kolkata",
+    )
+
+
 def _token_ttl_seconds() -> int:
     raw = os.getenv("TOKEN_TTL_SECONDS", "86400")
     try:
@@ -134,9 +162,12 @@ def _startup() -> None:
 def create_checkout(payload: IndusCreateCheckoutRequest) -> IndusCheckoutResponse:
     merchant = MerchantClient(payload.merchant_base_url)
     merchant_payload = payload.model_dump(
-        exclude={"merchant_base_url", "buyer", "fulfillment_address"},
+        exclude={"merchant_base_url", "buyer", "fulfillment_address", "capabilities"},
         exclude_none=True,
     )
+    # Declare agent capabilities so merchant can negotiate what both sides support
+    caps = payload.capabilities or _default_indus_capabilities()
+    merchant_payload["capabilities"] = jsonable_encoder(caps)
     session = merchant.create_checkout_session(merchant_payload)
 
     session_id = session.get("id")
