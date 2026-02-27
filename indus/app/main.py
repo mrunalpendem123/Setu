@@ -43,6 +43,9 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("indus")
 
+SUPPORTED_API_VERSIONS = {"2026-02-24"}
+CURRENT_API_VERSION = "2026-02-24"
+
 app = FastAPI(title="Indus Orchestrator", version="1.0.0")
 rate_limiter = RateLimiter()
 
@@ -51,6 +54,24 @@ def _rate_limit_key(request: Request) -> str:
     forwarded = request.headers.get("X-Forwarded-For", "")
     ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
     return f"{ip}:{request.url.path}"
+
+
+@app.middleware("http")
+async def api_version_middleware(request: Request, call_next):
+    requested = request.headers.get("API-Version")
+    if requested and requested not in SUPPORTED_API_VERSIONS:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "unsupported_api_version",
+                    "message": f"API-Version '{requested}' is not supported. Supported: {sorted(SUPPORTED_API_VERSIONS)}",
+                }
+            },
+        )
+    response = await call_next(request)
+    response.headers["API-Version"] = CURRENT_API_VERSION
+    return response
 
 
 @app.middleware("http")
@@ -110,6 +131,24 @@ def _default_indus_capabilities() -> AgentCapabilities:
                 psp="hyperswitch",
                 requires_delegate_payment=True,
                 requires_pci_compliance=False,
+                spec_uri="https://setu.indus.in/spec/2026-02-24/handlers/com.hyperswitch.upi",
+                instrument_schema={
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "description": "UPI payment instrument parameters",
+                    "properties": {
+                        "payment_method_type": {
+                            "type": "string",
+                            "enum": ["upi_collect", "upi_intent", "upi_qr"],
+                        },
+                        "vpa": {
+                            "type": "string",
+                            "description": "Virtual Payment Address for upi_collect",
+                        },
+                    },
+                    "if": {"properties": {"payment_method_type": {"const": "upi_collect"}}},
+                    "then": {"required": ["vpa"]},
+                },
             ),
             PaymentHandlerDeclaration(
                 id="com.hyperswitch.card",
@@ -117,6 +156,21 @@ def _default_indus_capabilities() -> AgentCapabilities:
                 psp="hyperswitch",
                 requires_delegate_payment=True,
                 requires_pci_compliance=True,
+                spec_uri="https://setu.indus.in/spec/2026-02-24/handlers/com.hyperswitch.card",
+                instrument_schema={
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "description": "Card payment instrument parameters",
+                    "required": ["card_number", "card_exp_month", "card_exp_year", "card_cvc"],
+                    "properties": {
+                        "card_number":      {"type": "string"},
+                        "card_exp_month":   {"type": "string"},
+                        "card_exp_year":    {"type": "string"},
+                        "card_cvc":         {"type": "string"},
+                        "card_holder_name": {"type": "string"},
+                        "billing_address":  {"type": "object"},
+                    },
+                },
             ),
         ],
         extensions=["india_gst", "upi_vpa", "discounts"],

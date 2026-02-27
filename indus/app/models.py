@@ -64,6 +64,8 @@ class PaymentHandlerDeclaration(BaseModel):
     psp: str                             # "hyperswitch"
     requires_delegate_payment: bool = True
     requires_pci_compliance: bool = False
+    spec_uri: Optional[str] = None       # URI to the handler's machine-readable spec
+    instrument_schema: Optional[Dict[str, Any]] = None  # JSON Schema for instrument params
 
 
 class AgentCapabilities(BaseModel):

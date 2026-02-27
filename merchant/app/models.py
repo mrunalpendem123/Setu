@@ -74,6 +74,8 @@ class PaymentHandlerDeclaration(BaseModel):
     psp: str                            # "hyperswitch"
     requires_delegate_payment: bool = True
     requires_pci_compliance: bool = False
+    spec_uri: Optional[str] = None      # URI to the handler's machine-readable spec
+    instrument_schema: Optional[Dict[str, Any]] = None  # JSON Schema for instrument params
 
 
 class AgentCapabilities(BaseModel):
@@ -183,13 +185,20 @@ class TotalsEntry(BaseModel):
 class FulfillmentOption(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["shipping"]
+    type: Literal["shipping", "pickup", "digital"]
     id: str
     title: str
     subtitle: str
-    carrier: str
-    earliest_delivery_time: datetime
-    latest_delivery_time: datetime
+    # shipping + pickup
+    carrier: Optional[str] = None
+    earliest_delivery_time: Optional[datetime] = None
+    latest_delivery_time: Optional[datetime] = None
+    # pickup-specific
+    store_name: Optional[str] = None
+    store_address: Optional[str] = None
+    pickup_instructions: Optional[str] = None
+    # digital-specific
+    delivery_method: Optional[Literal["email", "download", "sms"]] = None
     subtotal: int = Field(ge=0)
     tax: int = Field(ge=0)
     total: int = Field(ge=0)
@@ -270,6 +279,39 @@ class ErrorMessage(BaseModel):
 Message = Union[InfoMessage, WarningMessage, ErrorMessage]
 
 
+DiscountStatus = Literal["applied", "rejected"]
+DiscountType = Literal["percent", "flat"]
+DiscountRejectionReason = Literal[
+    "invalid",
+    "expired",
+    "minimum_not_met",
+    "maximum_uses_exceeded",
+    "not_combinable",
+    "region_restricted",
+]
+
+
+class AppliedDiscount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["applied"] = "applied"
+    code: str
+    type: DiscountType
+    value: float           # e.g. 10 for 10% or 200 for ₹2 flat
+    amount_saved: int      # paise saved by this discount
+
+
+class RejectedDiscount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["rejected"] = "rejected"
+    code: str
+    reason: DiscountRejectionReason
+
+
+DiscountEntry = Union[AppliedDiscount, RejectedDiscount]
+
+
 class Link(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -312,6 +354,7 @@ class CheckoutSession(BaseModel):
     fulfillment_option_id: Optional[str] = None
     payment_provider: PaymentProvider
     messages: List[Message]
+    discounts: List[DiscountEntry] = []
     links: List[Link]
     created_at: datetime
     updated_at: datetime
@@ -319,6 +362,8 @@ class CheckoutSession(BaseModel):
     negotiated_capabilities: Optional[NegotiatedCapabilities] = None
     order: Optional[Dict[str, Any]] = None
     gst_metadata: Optional[GSTMetadata] = None
+    cancel_reason: Optional[str] = None
+    cancel_intent: Optional[Dict[str, Any]] = None  # snapshot of items+total at cancel time
 
 
 class OrderSummary(BaseModel):

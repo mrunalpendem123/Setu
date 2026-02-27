@@ -30,6 +30,9 @@ from .models import (
     InfoMessage,
     WarningMessage,
     ErrorMessage,
+    AppliedDiscount,
+    RejectedDiscount,
+    DiscountEntry,
     OrderSummary,
     ItemInput,
     PaymentProvider,
@@ -48,9 +51,13 @@ from .audit import log_event
 
 TAX_RATE = 0.18
 
+SUPPORTED_API_VERSIONS = {"2026-02-24"}
+CURRENT_API_VERSION = "2026-02-24"
+
 
 FULFILLMENT_OPTION_TEMPLATES = [
     {
+        "type": "shipping",
         "id": "standard",
         "title": "Standard Delivery",
         "subtitle": "3-5 business days",
@@ -60,6 +67,7 @@ FULFILLMENT_OPTION_TEMPLATES = [
         "max_days": 5,
     },
     {
+        "type": "shipping",
         "id": "express",
         "title": "Express Delivery",
         "subtitle": "1-2 business days",
@@ -67,6 +75,26 @@ FULFILLMENT_OPTION_TEMPLATES = [
         "amount": 4900,
         "min_days": 1,
         "max_days": 2,
+    },
+    {
+        "type": "pickup",
+        "id": "store_pickup",
+        "title": "Store Pickup",
+        "subtitle": "Ready in 2-4 hours",
+        "store_name": "Indus Store — Koramangala",
+        "store_address": "47, 1st Cross, Koramangala 5th Block, Bengaluru - 560095",
+        "pickup_instructions": "Bring your order confirmation and a valid photo ID.",
+        "amount": 0,
+        "min_days": 0,
+        "max_days": 0,
+    },
+    {
+        "type": "digital",
+        "id": "email_delivery",
+        "title": "Digital Delivery",
+        "subtitle": "Instant — sent to your email",
+        "delivery_method": "email",
+        "amount": 0,
     },
 ]
 
@@ -85,6 +113,25 @@ _MERCHANT_HANDLERS: List[PaymentHandlerDeclaration] = [
         psp="hyperswitch",
         requires_delegate_payment=True,
         requires_pci_compliance=False,
+        spec_uri="https://setu.indus.in/spec/2026-02-24/handlers/com.hyperswitch.upi",
+        instrument_schema={
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "description": "UPI payment instrument parameters",
+            "properties": {
+                "payment_method_type": {
+                    "type": "string",
+                    "enum": ["upi_collect", "upi_intent", "upi_qr"],
+                    "description": "UPI flow type"
+                },
+                "vpa": {
+                    "type": "string",
+                    "description": "Virtual Payment Address — required for upi_collect (e.g. raj@upi)"
+                },
+            },
+            "if": {"properties": {"payment_method_type": {"const": "upi_collect"}}},
+            "then": {"required": ["vpa"]},
+        },
     ),
     PaymentHandlerDeclaration(
         id="com.hyperswitch.card",
@@ -92,6 +139,21 @@ _MERCHANT_HANDLERS: List[PaymentHandlerDeclaration] = [
         psp="hyperswitch",
         requires_delegate_payment=True,
         requires_pci_compliance=True,
+        spec_uri="https://setu.indus.in/spec/2026-02-24/handlers/com.hyperswitch.card",
+        instrument_schema={
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "description": "Card payment instrument parameters",
+            "required": ["card_number", "card_exp_month", "card_exp_year", "card_cvc"],
+            "properties": {
+                "card_number": {"type": "string", "description": "PAN — 13 to 19 digits"},
+                "card_exp_month": {"type": "string", "description": "Expiry month MM"},
+                "card_exp_year":  {"type": "string", "description": "Expiry year YYYY"},
+                "card_cvc":       {"type": "string", "description": "CVV/CVC — 3 or 4 digits"},
+                "card_holder_name": {"type": "string"},
+                "billing_address": {"type": "object"},
+            },
+        },
     ),
 ]
 
@@ -149,6 +211,24 @@ def _rate_limit_key(request: Request) -> str:
 
 
 @app.middleware("http")
+async def api_version_middleware(request: Request, call_next):
+    requested = request.headers.get("API-Version")
+    if requested and requested not in SUPPORTED_API_VERSIONS:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "unsupported_api_version",
+                    "message": f"API-Version '{requested}' is not supported. Supported: {sorted(SUPPORTED_API_VERSIONS)}",
+                }
+            },
+        )
+    response = await call_next(request)
+    response.headers["API-Version"] = CURRENT_API_VERSION
+    return response
+
+
+@app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     if os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true":
         result = rate_limiter.check(_rate_limit_key(request))
@@ -195,13 +275,25 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     return JSONResponse(content=payload, status_code=422)
 
 
-def _build_line_items(items: List[ItemInput], coupon_code: str | None = None) -> List[CheckoutLineItem]:
+def _build_line_items(
+    items: List[ItemInput],
+    coupon_code: str | None = None,
+) -> tuple[List[CheckoutLineItem], List[DiscountEntry]]:
+    """Return (line_items, discount_entries).
+
+    discount_entries contains one entry per coupon code attempted:
+    - AppliedDiscount when the coupon reduced at least one item's price
+    - RejectedDiscount when the code was not found / zero discount
+    """
     from .models import GSTMetadata
     line_items: List[CheckoutLineItem] = []
+    total_discount = 0
+
     for item in items:
         catalog_item = get_item(item.id)
         base_amount = catalog_item["price"] * item.quantity
         discount = apply_coupon(coupon_code or "", base_amount) if coupon_code else 0
+        total_discount += discount
         subtotal = base_amount - discount
         tax = int(round(subtotal * TAX_RATE))
         total = subtotal + tax
@@ -224,7 +316,28 @@ def _build_line_items(items: List[ItemInput], coupon_code: str | None = None) ->
                 gst_metadata=gst_meta,
             )
         )
-    return line_items
+
+    discount_entries: List[DiscountEntry] = []
+    if coupon_code:
+        coupon = get_coupon(coupon_code)
+        if coupon and total_discount > 0:
+            discount_entries.append(
+                AppliedDiscount(
+                    code=coupon_code.upper(),
+                    type=coupon["type"],
+                    value=float(coupon["value"]),
+                    amount_saved=total_discount,
+                )
+            )
+        else:
+            discount_entries.append(
+                RejectedDiscount(
+                    code=coupon_code.upper(),
+                    reason="invalid",
+                )
+            )
+
+    return line_items, discount_entries
 
 
 def _compute_totals(line_items: List[CheckoutLineItem], shipping_amount: int) -> List[TotalsEntry]:
@@ -259,26 +372,48 @@ def _is_valid_fulfillment_option(option_id: str) -> bool:
 def _build_fulfillment_options() -> List[FulfillmentOption]:
     now = datetime.now(timezone.utc)
     options: List[FulfillmentOption] = []
-    for option in FULFILLMENT_OPTION_TEMPLATES:
-        earliest = now + timedelta(days=int(option["min_days"]))
-        latest = now + timedelta(days=int(option["max_days"]))
-        subtotal = int(option["amount"])
-        tax = 0
-        total = subtotal + tax
-        options.append(
-            FulfillmentOption(
+    for opt in FULFILLMENT_OPTION_TEMPLATES:
+        subtotal = int(opt["amount"])
+        total = subtotal
+        ftype = opt["type"]
+
+        if ftype == "shipping":
+            earliest = now + timedelta(days=int(opt["min_days"]))
+            latest = now + timedelta(days=int(opt["max_days"]))
+            options.append(FulfillmentOption(
                 type="shipping",
-                id=option["id"],
-                title=option["title"],
-                subtitle=option["subtitle"],
-                carrier=option["carrier"],
+                id=opt["id"],
+                title=opt["title"],
+                subtitle=opt["subtitle"],
+                carrier=opt["carrier"],
                 earliest_delivery_time=earliest,
                 latest_delivery_time=latest,
-                subtotal=subtotal,
-                tax=tax,
-                total=total,
-            )
-        )
+                subtotal=subtotal, tax=0, total=total,
+            ))
+        elif ftype == "pickup":
+            earliest = now + timedelta(hours=2)
+            latest = now + timedelta(hours=4)
+            options.append(FulfillmentOption(
+                type="pickup",
+                id=opt["id"],
+                title=opt["title"],
+                subtitle=opt["subtitle"],
+                store_name=opt.get("store_name"),
+                store_address=opt.get("store_address"),
+                pickup_instructions=opt.get("pickup_instructions"),
+                earliest_delivery_time=earliest,
+                latest_delivery_time=latest,
+                subtotal=subtotal, tax=0, total=total,
+            ))
+        elif ftype == "digital":
+            options.append(FulfillmentOption(
+                type="digital",
+                id=opt["id"],
+                title=opt["title"],
+                subtitle=opt["subtitle"],
+                delivery_method=opt.get("delivery_method"),
+                subtotal=subtotal, tax=0, total=total,
+            ))
     return options
 
 
@@ -483,7 +618,7 @@ async def create_checkout_session(
     except KeyError as exc:
         raise HTTPException(status_code=400, detail={"code": "unknown_item", "message": str(exc)}) from exc
 
-    line_items = _build_line_items(payload.items)
+    line_items, discount_entries = _build_line_items(payload.items)
     totals = _compute_totals(line_items, shipping_amount=0)
 
     if payload.fulfillment_token:
@@ -507,6 +642,7 @@ async def create_checkout_session(
         fulfillment_option_id=None,
         payment_provider=_payment_provider(),
         messages=_messages_for_status(fulfillment_token, None),
+        discounts=discount_entries,
         links=_build_links(),
         created_at=now,
         updated_at=now,
@@ -596,7 +732,7 @@ async def update_checkout_session(
             session_data["coupon_code"] = payload.coupon_code or None
 
         coupon_code = session_data.get("coupon_code")
-        line_items = _build_line_items(items, coupon_code=coupon_code)
+        line_items, discount_entries = _build_line_items(items, coupon_code=coupon_code)
         fulfillment_option_id = session_data.get("fulfillment_option_id")
         shipping_amount = _get_shipping_amount(fulfillment_option_id)
         totals = _compute_totals(line_items, shipping_amount=shipping_amount)
@@ -613,6 +749,7 @@ async def update_checkout_session(
                 "fulfillment_options": jsonable_encoder(_build_fulfillment_options()),
                 "payment_provider": jsonable_encoder(_payment_provider()),
                 "links": jsonable_encoder(_build_links()),
+                "discounts": jsonable_encoder(discount_entries),
                 "updated_at": now.isoformat(),
                 "status": status,
                 "messages": jsonable_encoder(
@@ -678,16 +815,37 @@ async def cancel_checkout_session(
             raise HTTPException(status_code=404, detail={"code": "checkout_session_not_found", "message": "Checkout session not found"})
         store = IdempotencyStore(db)
 
-        _ = CancelSessionRequest.model_validate_json(body) if body else None
+        cancel_req = CancelSessionRequest.model_validate_json(body) if body else None
         session_data: Dict[str, Any] = dict(row.data)
 
         terminal = {"completed", "canceled", "expired"}
         if session_data.get("status") in terminal or _is_session_expired(session_data):
             raise HTTPException(status_code=405, detail={"code": "checkout_session_not_cancelable", "message": "Checkout session cannot be canceled"})
 
+        # Build intent snapshot from current line_items + totals
+        cancel_intent: Dict[str, Any] = {
+            "items": [
+                {
+                    "id": li.get("item", {}).get("id"),
+                    "quantity": li.get("item", {}).get("quantity"),
+                    "title": li.get("item", {}).get("title"),
+                    "total": li.get("total"),
+                }
+                for li in session_data.get("line_items", [])
+            ],
+            "total_amount": next(
+                (t.get("amount") for t in session_data.get("totals", []) if t.get("type") == "total"),
+                None,
+            ),
+            "currency": session_data.get("currency"),
+            "fulfillment_option_id": session_data.get("fulfillment_option_id"),
+        }
+
         now = datetime.now(timezone.utc)
         session_data["status"] = "canceled"
         session_data["updated_at"] = now.isoformat()
+        session_data["cancel_reason"] = cancel_req.reason if cancel_req else None
+        session_data["cancel_intent"] = cancel_intent
 
         row.status = "canceled"
         row.updated_at = now
