@@ -940,7 +940,7 @@ async def complete_checkout_session(
             row.updated_at = now
             row.data = session_data
             db.commit()
-            return _apply_idempotency(request, body, session_data, status_code=200, store=store)
+            return _apply_idempotency(request, response, body, session_data, status_code=200, store=store)
 
         verified, reason = verify_hyperswitch_payment(
             payment_id=token,
@@ -963,7 +963,7 @@ async def complete_checkout_session(
                 row.updated_at = now
                 row.data = session_data
                 db.commit()
-                return _apply_idempotency(request, body, session_data, status_code=200, store=store)
+                return _apply_idempotency(request, response, body, session_data, status_code=200, store=store)
             raise HTTPException(status_code=400, detail={"code": "payment_not_verified", "message": f"Payment not verified: {reason}"})
 
         log_event(

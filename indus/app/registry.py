@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import Column, String, DateTime
@@ -16,7 +16,7 @@ class MerchantRecord(Base):
     name = Column(String, nullable=False)
     base_url = Column(String, nullable=False)
     product_feed_url = Column(String, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 def init_registry() -> None:

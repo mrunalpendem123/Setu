@@ -18,7 +18,7 @@ def _get_api_versions() -> set[str]:
     versions = os.getenv("ACP_API_VERSIONS")
     if versions:
         return {value.strip() for value in versions.split(",") if value.strip()}
-    return {os.getenv("ACP_API_VERSION", "2025-09-29")}
+    return {os.getenv("ACP_API_VERSION", "2026-02-24")}
 
 
 def _get_signature_secret() -> str | None:

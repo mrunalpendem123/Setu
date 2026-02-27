@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import create_engine, Column, String, DateTime, Integer
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -32,8 +32,8 @@ class SessionRecord(Base):
     session_id = Column(String, primary_key=True)
     merchant_base_url = Column(String, nullable=False)
     session_data = Column(JSONB, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 class PaymentRecord(Base):
@@ -42,8 +42,8 @@ class PaymentRecord(Base):
     payment_id = Column(String, primary_key=True)
     status = Column(String, nullable=False)
     data = Column(JSONB, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 class TokenRecord(Base):
@@ -53,8 +53,8 @@ class TokenRecord(Base):
     session_id = Column(String, nullable=False)
     kind = Column(String, nullable=False)
     payload = Column(JSONB, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    expires_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class OrderEvent(Base):
@@ -62,7 +62,7 @@ class OrderEvent(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     payload = Column(JSONB, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 def init_db() -> None:

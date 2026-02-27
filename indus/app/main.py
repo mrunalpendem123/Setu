@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 import logging
 
@@ -190,7 +190,7 @@ def _token_ttl_seconds() -> int:
 
 def _issue_token(db, session_id: str, kind: str, payload: Dict[str, Any]) -> str:
     token = f"{kind[:1]}tok_{uuid4().hex}"
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     expires_at = now + timedelta(seconds=_token_ttl_seconds())
     db.merge(
         TokenRecord(
@@ -254,8 +254,8 @@ def create_checkout(payload: IndusCreateCheckoutRequest) -> IndusCheckoutRespons
                 session_id=session_id,
                 merchant_base_url=payload.merchant_base_url,
                 session_data=session_data,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
             )
         )
         db.commit()
@@ -305,7 +305,7 @@ def update_checkout(
             elif existing.get("indus_fulfillment_address"):
                 session_data["indus_fulfillment_address"] = existing.get("indus_fulfillment_address")
             record.session_data = session_data
-            record.updated_at = datetime.utcnow()
+            record.updated_at = datetime.now(timezone.utc)
             db.commit()
 
     return IndusCheckoutResponse(merchant_base_url=merchant_base_url, checkout_session=session)
@@ -326,7 +326,7 @@ def get_checkout(session_id: str) -> IndusCheckoutResponse:
         record = db.get(SessionRecord, session_id)
         if record:
             record.session_data = session
-            record.updated_at = datetime.utcnow()
+            record.updated_at = datetime.now(timezone.utc)
             db.commit()
 
     return IndusCheckoutResponse(merchant_base_url=merchant_base_url, checkout_session=session)
@@ -347,7 +347,7 @@ def cancel_checkout(session_id: str) -> IndusCheckoutResponse:
         record = db.get(SessionRecord, session_id)
         if record:
             record.session_data = session
-            record.updated_at = datetime.utcnow()
+            record.updated_at = datetime.now(timezone.utc)
             db.commit()
 
     return IndusCheckoutResponse(merchant_base_url=merchant_base_url, checkout_session=session)
@@ -391,8 +391,8 @@ def create_payment_intent(
                 payment_id=payment_id,
                 status=record_data.get("status", "unknown"),
                 data=record_data,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
             )
         )
         db.commit()
@@ -441,7 +441,7 @@ def redeem_token(
         record = db.get(TokenRecord, token)
         if not record:
             raise HTTPException(status_code=404, detail="token_not_found")
-        if record.expires_at and record.expires_at < datetime.utcnow():
+        if record.expires_at and record.expires_at < datetime.now(timezone.utc):
             raise HTTPException(status_code=410, detail="token_expired")
         return TokenRedeemResponse(
             token=token,
@@ -836,7 +836,7 @@ def indus_capabilities() -> dict:
 @app.post("/indus/merchants")
 def register_merchant(payload: MerchantRegisterRequest) -> MerchantResponse:
     merchant_id = f"m_{uuid4().hex}"
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     record = MerchantRecord(
         id=merchant_id,
         name=payload.name,

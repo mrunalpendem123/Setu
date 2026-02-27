@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import create_engine, Column, String, DateTime, Integer
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -33,8 +33,8 @@ class CheckoutSessionModel(Base):
     status = Column(String, nullable=False)
     currency = Column(String, nullable=False)
     data = Column(JSONB, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 class OrderModel(Base):
@@ -44,8 +44,8 @@ class OrderModel(Base):
     checkout_session_id = Column(String, nullable=False)
     status = Column(String, nullable=False)
     data = Column(JSONB, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 class IdempotencyModel(Base):
@@ -55,7 +55,7 @@ class IdempotencyModel(Base):
     request_hash = Column(String, nullable=False)
     response_body = Column(JSONB, nullable=False)
     status_code = Column(Integer, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 class AuditLogModel(Base):
@@ -65,7 +65,7 @@ class AuditLogModel(Base):
     event_type = Column(String, nullable=False)
     entity_id = Column(String, nullable=False)
     payload = Column(JSONB, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 def init_db() -> None:
