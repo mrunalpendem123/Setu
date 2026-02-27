@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -27,6 +27,9 @@ from .models import (
     TotalsEntry,
     FulfillmentOption,
     Message,
+    InfoMessage,
+    WarningMessage,
+    ErrorMessage,
     OrderSummary,
     ItemInput,
     PaymentProvider,
@@ -368,26 +371,71 @@ def _status_for_session(fulfillment_token: str | None, fulfillment_option_id: st
 def _messages_for_status(
     fulfillment_token: str | None,
     fulfillment_option_id: str | None,
+    *,
+    coupon_invalid: bool = False,
+    out_of_stock_item: str | None = None,
+    requires_3ds: bool = False,
+    low_stock_item: str | None = None,
 ) -> List[Message]:
+    msgs: List[Message] = []
+
+    # Errors — highest priority
+    if out_of_stock_item:
+        msgs.append(
+            ErrorMessage(
+                code="out_of_stock",
+                severity="high",
+                content=f"'{out_of_stock_item}' is out of stock",
+                param="items",
+            )
+        )
+    if coupon_invalid:
+        msgs.append(
+            ErrorMessage(
+                code="coupon_invalid",
+                severity="medium",
+                content="The coupon code you entered is not valid",
+                param="coupon_code",
+            )
+        )
+    if requires_3ds:
+        msgs.append(
+            ErrorMessage(
+                code="requires_3ds",
+                severity="high",
+                content="3D Secure authentication is required to complete payment",
+                param="payment_data.token",
+            )
+        )
+
+    # Warnings — informational, non-blocking
+    if low_stock_item:
+        msgs.append(
+            WarningMessage(
+                code="low_stock",
+                severity="low",
+                content=f"Only a few units of '{low_stock_item}' remain",
+                param="items",
+            )
+        )
+
+    # Info — guidance messages for incomplete sessions
     if not fulfillment_token:
-        return [
-            Message(
-                type="info",
-                content_type="text",
-                content="Fulfillment address required",
+        msgs.append(
+            InfoMessage(
+                content="Provide a fulfillment address to proceed",
                 param="fulfillment_address",
             )
-        ]
-    if not fulfillment_option_id:
-        return [
-            Message(
-                type="info",
-                content_type="text",
-                content="Select a fulfillment option",
+        )
+    elif not fulfillment_option_id:
+        msgs.append(
+            InfoMessage(
+                content="Select a fulfillment option to proceed",
                 param="fulfillment_option_id",
             )
-        ]
-    return []
+        )
+
+    return msgs
 
 
 def _redeem_token(token: str, expected_kind: str) -> Dict[str, Any]:
@@ -724,6 +772,12 @@ async def complete_checkout_session(
             now = datetime.now(timezone.utc)
             session_data["status"] = "pending_approval"
             session_data["updated_at"] = now.isoformat()
+            session_data["messages"] = jsonable_encoder([
+                InfoMessage(
+                    severity="medium",
+                    content="Your order is awaiting merchant approval before payment is collected",
+                )
+            ])
             row.status = "pending_approval"
             row.updated_at = now
             row.data = session_data
@@ -740,6 +794,13 @@ async def complete_checkout_session(
                 now = datetime.now(timezone.utc)
                 session_data["status"] = "authentication_required"
                 session_data["updated_at"] = now.isoformat()
+                session_data["messages"] = jsonable_encoder(
+                    _messages_for_status(
+                        session_data.get("fulfillment_token"),
+                        session_data.get("fulfillment_option_id"),
+                        requires_3ds=True,
+                    )
+                )
                 row.status = "authentication_required"
                 row.updated_at = now
                 row.data = session_data

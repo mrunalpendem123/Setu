@@ -1,0 +1,132 @@
+{
+  "_comment": "Example CheckoutSession response at various stages, showing the discriminated messages array.",
+
+  "stage_1_no_address": {
+    "description": "Freshly created session — no fulfillment token, not ready for payment",
+    "request": {
+      "items": [{"id": "sku_hoodie", "quantity": 1}]
+    },
+    "response": {
+      "id": "cs_abc123",
+      "status": "not_ready_for_payment",
+      "currency": "inr",
+      "line_items": [
+        {
+          "id": "li_xyz",
+          "item": {"id": "sku_hoodie", "quantity": 1, "title": "Indus Hoodie"},
+          "base_amount": 249900,
+          "discount": 0,
+          "subtotal": 249900,
+          "tax": 44982,
+          "total": 294882,
+          "gst_metadata": {"hsn_code": "6110", "tax_label": "GST", "tax_rate_pct": 18.0}
+        }
+      ],
+      "totals": [
+        {"type": "items_base_amount", "display_text": "Items subtotal", "amount": 249900},
+        {"type": "items_discount",    "display_text": "Items discount",  "amount": 0},
+        {"type": "subtotal",          "display_text": "Subtotal",        "amount": 249900},
+        {"type": "tax",               "display_text": "Tax",             "amount": 44982},
+        {"type": "fulfillment",       "display_text": "Shipping",        "amount": 0},
+        {"type": "total",             "display_text": "Total",           "amount": 294882}
+      ],
+      "fulfillment_options": [
+        {
+          "type": "shipping",
+          "id": "standard",
+          "title": "Standard Delivery",
+          "subtitle": "3-5 business days",
+          "carrier": "Partner Logistics",
+          "earliest_delivery_time": "2026-03-03T00:00:00Z",
+          "latest_delivery_time": "2026-03-05T00:00:00Z",
+          "subtotal": 0,
+          "tax": 0,
+          "total": 0
+        }
+      ],
+      "payment_provider": {
+        "provider": "hyperswitch",
+        "supported_payment_methods": ["card", "upi"]
+      },
+      "messages": [
+        {
+          "type": "info",
+          "severity": "info",
+          "content_type": "plain",
+          "content": "Provide a fulfillment address to proceed",
+          "param": "fulfillment_address"
+        }
+      ],
+      "links": [
+        {"type": "privacy_policy", "url": "https://merchant.example.in/privacy"},
+        {"type": "terms_of_use",   "url": "https://merchant.example.in/terms"}
+      ],
+      "created_at": "2026-02-28T10:00:00Z",
+      "updated_at": "2026-02-28T10:00:00Z",
+      "expires_at": "2026-03-01T10:00:00Z",
+      "negotiated_capabilities": {
+        "payment_methods": ["card", "upi", "upi_collect", "upi_intent", "upi_qr"],
+        "payment_handlers": [
+          {"id": "com.hyperswitch.upi",  "version": "2026-02-24", "psp": "hyperswitch", "requires_delegate_payment": true, "requires_pci_compliance": false},
+          {"id": "com.hyperswitch.card", "version": "2026-02-24", "psp": "hyperswitch", "requires_delegate_payment": true, "requires_pci_compliance": true}
+        ],
+        "extensions": ["discounts", "india_gst", "upi_vpa"]
+      }
+    }
+  },
+
+  "stage_2_address_provided_no_option": {
+    "description": "Fulfillment token provided but no option selected yet",
+    "messages_example": [
+      {
+        "type": "info",
+        "severity": "info",
+        "content_type": "plain",
+        "content": "Select a fulfillment option to proceed",
+        "param": "fulfillment_option_id"
+      }
+    ]
+  },
+
+  "stage_3_low_stock_warning": {
+    "description": "Session is ready but a low-stock warning is attached",
+    "messages_example": [
+      {
+        "type": "warning",
+        "code": "low_stock",
+        "severity": "low",
+        "content_type": "plain",
+        "content": "Only a few units of 'Indus Hoodie' remain",
+        "param": "items"
+      }
+    ]
+  },
+
+  "stage_4_3ds_required": {
+    "description": "Payment attempt triggered 3DS; session transitions to authentication_required",
+    "status": "authentication_required",
+    "messages_example": [
+      {
+        "type": "error",
+        "code": "requires_3ds",
+        "severity": "high",
+        "content_type": "plain",
+        "content": "3D Secure authentication is required to complete payment",
+        "param": "payment_data.token"
+      }
+    ]
+  },
+
+  "stage_5_pending_approval": {
+    "description": "B2B order submitted with approval_required=true; pending merchant review",
+    "status": "pending_approval",
+    "messages_example": [
+      {
+        "type": "info",
+        "severity": "medium",
+        "content_type": "plain",
+        "content": "Your order is awaiting merchant approval before payment is collected"
+      }
+    ]
+  }
+}

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import List, Optional, Dict, Any, Literal
+from typing import List, Optional, Dict, Any, Literal, Union
 
 from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 
@@ -195,14 +195,79 @@ class FulfillmentOption(BaseModel):
     total: int = Field(ge=0)
 
 
-class Message(BaseModel):
+MessageSeverity = Literal["info", "low", "medium", "high", "critical"]
+MessageContentType = Literal["plain", "markdown"]
+
+WarningCode = Literal[
+    "low_stock",
+    "high_demand",
+    "shipping_delay",
+    "price_change",
+    "expiring_promotion",
+    "limited_availability",
+    "discount_code_expired",
+    "discount_code_invalid",
+    "discount_code_combination_disallowed",
+    "discount_code_minimum_not_met",
+]
+
+ErrorCode = Literal[
+    "missing",
+    "invalid",
+    "out_of_stock",
+    "payment_declined",
+    "requires_sign_in",
+    "requires_3ds",
+    "quantity_exceeded",
+    "coupon_invalid",
+    "coupon_expired",
+    "minimum_not_met",
+    "maximum_exceeded",
+    "region_restricted",
+    "age_verification_required",
+    "approval_required",
+    "unsupported",
+    "not_found",
+    "conflict",
+    "rate_limited",
+    "expired",
+    "intervention_required",
+]
+
+
+class InfoMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["info", "error"]
-    content_type: Literal["text"]
+    type: Literal["info"] = "info"
+    severity: MessageSeverity = "info"
+    content_type: MessageContentType = "plain"
+    content: str
+    param: Optional[str] = None   # JSONPath of the field this message refers to
+
+
+class WarningMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["warning"] = "warning"
+    code: WarningCode
+    severity: MessageSeverity = "low"
+    content_type: MessageContentType = "plain"
     content: str
     param: Optional[str] = None
-    code: Optional[str] = None
+
+
+class ErrorMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["error"] = "error"
+    code: ErrorCode
+    severity: MessageSeverity = "high"
+    content_type: MessageContentType = "plain"
+    content: str
+    param: Optional[str] = None
+
+
+Message = Union[InfoMessage, WarningMessage, ErrorMessage]
 
 
 class Link(BaseModel):

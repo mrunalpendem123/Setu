@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "merchant_checkout_session",
+  "title": "CheckoutSession",
+  "description": "The checkout session object returned by the merchant on create, update, get, cancel, and complete.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "status", "currency", "line_items", "totals", "fulfillment_options", "payment_provider", "messages", "links", "created_at", "updated_at"],
+  "properties": {
+    "id": {"type": "string", "description": "Session identifier (cs_...)"},
+    "status": {
+      "type": "string",
+      "enum": [
+        "not_ready_for_payment",
+        "ready_for_payment",
+        "authentication_required",
+        "pending_approval",
+        "completed",
+        "canceled",
+        "expired"
+      ],
+      "description": "Current state of the checkout session"
+    },
+    "currency": {"type": "string", "minLength": 3, "maxLength": 3, "description": "ISO 4217 currency code e.g. inr"},
+    "buyer_token": {"type": "string", "description": "Opaque token for the buyer identity"},
+    "fulfillment_token": {"type": "string", "description": "Opaque token for the fulfillment address"},
+    "fulfillment_option_id": {"type": "string", "description": "Currently selected fulfillment option"},
+    "line_items": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/CheckoutLineItem"}
+    },
+    "totals": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/TotalsEntry"}
+    },
+    "fulfillment_options": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/FulfillmentOption"}
+    },
+    "payment_provider": {"$ref": "#/$defs/PaymentProvider"},
+    "messages": {
+      "type": "array",
+      "description": "Structured messages guiding the agent through the checkout flow",
+      "items": {"$ref": "#/$defs/Message"}
+    },
+    "links": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Link"}
+    },
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "negotiated_capabilities": {"$ref": "#/$defs/NegotiatedCapabilities"},
+    "order": {
+      "type": "object",
+      "description": "Order summary once status = completed",
+      "properties": {
+        "id": {"type": "string"},
+        "status": {"type": "string"},
+        "created_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "gst_metadata": {"$ref": "#/$defs/GSTMetadata"}
+  },
+  "$defs": {
+    "CheckoutLineItem": {
+      "type": "object",
+      "required": ["id", "item", "base_amount", "discount", "subtotal", "tax", "total"],
+      "properties": {
+        "id": {"type": "string"},
+        "item": {
+          "type": "object",
+          "required": ["id", "quantity"],
+          "properties": {
+            "id": {"type": "string"},
+            "quantity": {"type": "integer", "minimum": 1},
+            "title": {"type": "string"},
+            "image_url": {"type": "string"}
+          }
+        },
+        "base_amount": {"type": "integer", "minimum": 0},
+        "discount": {"type": "integer", "minimum": 0},
+        "subtotal": {"type": "integer", "minimum": 0},
+        "tax": {"type": "integer", "minimum": 0},
+        "total": {"type": "integer", "minimum": 0},
+        "gst_metadata": {"$ref": "#/$defs/GSTMetadata"}
+      }
+    },
+    "TotalsEntry": {
+      "type": "object",
+      "required": ["type", "display_text", "amount"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["items_base_amount", "items_discount", "subtotal", "discount", "fulfillment", "tax", "fee", "total"]
+        },
+        "display_text": {"type": "string"},
+        "amount": {"type": "integer", "minimum": 0}
+      }
+    },
+    "FulfillmentOption": {
+      "type": "object",
+      "required": ["type", "id", "title", "subtitle", "carrier", "earliest_delivery_time", "latest_delivery_time", "subtotal", "tax", "total"],
+      "properties": {
+        "type": {"type": "string", "enum": ["shipping"]},
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "subtitle": {"type": "string"},
+        "carrier": {"type": "string"},
+        "earliest_delivery_time": {"type": "string", "format": "date-time"},
+        "latest_delivery_time": {"type": "string", "format": "date-time"},
+        "subtotal": {"type": "integer", "minimum": 0},
+        "tax": {"type": "integer", "minimum": 0},
+        "total": {"type": "integer", "minimum": 0}
+      }
+    },
+    "PaymentProvider": {
+      "type": "object",
+      "required": ["provider", "supported_payment_methods"],
+      "properties": {
+        "provider": {"type": "string", "enum": ["hyperswitch"]},
+        "supported_payment_methods": {
+          "type": "array",
+          "items": {"type": "string", "enum": ["card", "upi"]}
+        }
+      }
+    },
+    "Message": {
+      "oneOf": [
+        {"$ref": "#/$defs/InfoMessage"},
+        {"$ref": "#/$defs/WarningMessage"},
+        {"$ref": "#/$defs/ErrorMessage"}
+      ]
+    },
+    "InfoMessage": {
+      "type": "object",
+      "description": "Guidance message to help the agent complete the checkout flow",
+      "required": ["type", "severity", "content_type", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"type": "string", "const": "info"},
+        "severity": {"type": "string", "enum": ["info", "low", "medium", "high", "critical"]},
+        "content_type": {"type": "string", "enum": ["plain", "markdown"]},
+        "content": {"type": "string"},
+        "param": {"type": "string", "description": "JSONPath of the field this message refers to"}
+      }
+    },
+    "WarningMessage": {
+      "type": "object",
+      "description": "Non-blocking warning about a session condition",
+      "required": ["type", "code", "severity", "content_type", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"type": "string", "const": "warning"},
+        "code": {
+          "type": "string",
+          "enum": [
+            "low_stock", "high_demand", "shipping_delay", "price_change",
+            "expiring_promotion", "limited_availability",
+            "discount_code_expired", "discount_code_invalid",
+            "discount_code_combination_disallowed", "discount_code_minimum_not_met"
+          ]
+        },
+        "severity": {"type": "string", "enum": ["info", "low", "medium", "high", "critical"]},
+        "content_type": {"type": "string", "enum": ["plain", "markdown"]},
+        "content": {"type": "string"},
+        "param": {"type": "string"}
+      }
+    },
+    "ErrorMessage": {
+      "type": "object",
+      "description": "Blocking error that must be resolved before checkout can proceed",
+      "required": ["type", "code", "severity", "content_type", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"type": "string", "const": "error"},
+        "code": {
+          "type": "string",
+          "enum": [
+            "missing", "invalid", "out_of_stock", "payment_declined",
+            "requires_sign_in", "requires_3ds", "quantity_exceeded",
+            "coupon_invalid", "coupon_expired", "minimum_not_met",
+            "maximum_exceeded", "region_restricted", "age_verification_required",
+            "approval_required", "unsupported", "not_found", "conflict",
+            "rate_limited", "expired", "intervention_required"
+          ]
+        },
+        "severity": {"type": "string", "enum": ["info", "low", "medium", "high", "critical"]},
+        "content_type": {"type": "string", "enum": ["plain", "markdown"]},
+        "content": {"type": "string"},
+        "param": {"type": "string"}
+      }
+    },
+    "Link": {
+      "type": "object",
+      "required": ["type", "url"],
+      "properties": {
+        "type": {"type": "string", "enum": ["privacy_policy", "terms_of_use", "support"]},
+        "url": {"type": "string"}
+      }
+    },
+    "GSTMetadata": {
+      "type": "object",
+      "properties": {
+        "gstin": {"type": "string", "description": "Buyer's GSTIN for B2B invoicing"},
+        "hsn_code": {"type": "string", "description": "HSN/SAC code for the item"},
+        "tax_label": {"type": "string", "default": "GST"},
+        "tax_rate_pct": {"type": "number", "default": 18.0}
+      }
+    },
+    "NegotiatedCapabilities": {
+      "type": "object",
+      "required": ["payment_methods", "payment_handlers", "extensions"],
+      "properties": {
+        "payment_methods": {"type": "array", "items": {"type": "string"}},
+        "payment_handlers": {"type": "array", "items": {"type": "object"}},
+        "extensions": {"type": "array", "items": {"type": "string"}},
+        "locale": {"type": "string"},
+        "timezone": {"type": "string"}
+      }
+    }
+  }
+}
