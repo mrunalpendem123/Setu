@@ -38,3 +38,6 @@ class MerchantClient:
 
     def get_checkout_session(self, session_id: str) -> Dict[str, Any]:
         return self._get(f"/checkout_sessions/{session_id}")
+
+    def get_product_feed(self) -> Dict[str, Any]:
+        return self._get("/product_feed")

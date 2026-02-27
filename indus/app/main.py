@@ -804,40 +804,81 @@ def get_merchant(merchant_id: str) -> dict:
 
 @app.post("/indus/sarvam/product_search")
 def sarvam_product_search(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Multilingual product search powered by Sarvam-M.
+    Fetches the merchant's real product feed, passes it as context, and asks
+    Sarvam-M to find matching items in the buyer's language.
+    """
     query = payload.get("query", "")
     language = payload.get("language", "en")
     merchant_base_url = payload.get("merchant_base_url", "")
 
     if not query:
         raise HTTPException(status_code=400, detail={"code": "missing_query", "message": "query is required"})
+    if not merchant_base_url:
+        raise HTTPException(status_code=400, detail={"code": "missing_merchant_url", "message": "merchant_base_url is required"})
+
+    # Fetch real product catalog from merchant feed
+    try:
+        merchant = MerchantClient(merchant_base_url)
+        feed = merchant.get_product_feed()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={"code": "merchant_feed_unavailable", "message": str(exc)}) from exc
+
+    items = feed.get("items", [])[:50]  # cap at 50 to stay within context
+    product_lines = "\n".join(
+        f"id:{item['id']} | {item['title']} | ₹{item.get('price_paise', 0) // 100} | {item.get('description', '')}"
+        for item in items
+        if item.get("availability") == "in_stock"
+    )
 
     try:
         client = SarvamClient()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail={"code": "sarvam_unavailable", "message": str(exc)}) from exc
 
-    sarvam_payload = {
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    f"You are a product search assistant for an Indian e-commerce store. "
-                    f"The merchant is at {merchant_base_url}. "
-                    f"Respond in language: {language}."
-                ),
-            },
-            {"role": "user", "content": query},
-        ],
-        "model": "sarvam-2b",
-    }
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a product search assistant for an Indian e-commerce store. "
+                "Given the product catalog below, find items that best match the user's query. "
+                "Respond ONLY with a valid JSON object (no markdown, no extra text) in this exact format:\n"
+                '{"matches": [{"id": "item_id", "title": "...", "price_paise": 0, "reason": "why it matches"}], '
+                '"message": "brief response to the buyer in their requested language"}\n\n'
+                f"CATALOG:\n{product_lines}"
+            ),
+        },
+        {"role": "user", "content": f"Language: {language}\nQuery: {query}"},
+    ]
+
     try:
-        return client.request(sarvam_payload)
+        result = client.chat(messages, temperature=0.2, max_tokens=512)
     except SarvamAPIError as exc:
         _raise_sarvam_error(exc)
+
+    content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+    try:
+        import json as _json
+        parsed = _json.loads(content)
+    except (ValueError, KeyError):
+        parsed = {"matches": [], "message": content}
+
+    return {
+        "query": query,
+        "language": language,
+        "merchant_base_url": merchant_base_url,
+        **parsed,
+    }
 
 
 @app.post("/indus/sarvam/checkout_assist")
 def sarvam_checkout_assist(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Multilingual checkout assistant powered by Sarvam-M.
+    Loads the real session state (items, totals, fulfillment options) from DB
+    and passes it as context so Sarvam-M can give grounded, actionable responses.
+    """
     session_id = payload.get("session_id", "")
     user_message = payload.get("user_message", "")
     language = payload.get("language", "hi")
@@ -845,30 +886,73 @@ def sarvam_checkout_assist(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not user_message:
         raise HTTPException(status_code=400, detail={"code": "missing_message", "message": "user_message is required"})
 
+    # Load session context from DB so the assistant knows what's in the cart
+    session_context = ""
+    if session_id:
+        with get_db() as db:
+            record = db.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
+        if record:
+            data = record.session_data or {}
+            status = data.get("status", "unknown")
+            totals = data.get("totals", {})
+            line_items = data.get("line_items", [])
+            fulfillment_opts = data.get("fulfillment_options", [])
+
+            item_lines = "\n".join(
+                f"  - {i.get('title', i.get('product_id', 'item'))} x{i.get('quantity', 1)}"
+                f" @ ₹{i.get('unit_price', 0) // 100}"
+                for i in line_items
+            )
+            opt_lines = "\n".join(
+                f"  - {o['id']}: {o.get('title', '')} ₹{o.get('total', 0) // 100}"
+                for o in fulfillment_opts
+            )
+            session_context = (
+                f"\n\nSESSION CONTEXT ({session_id}):"
+                f"\nStatus: {status}"
+                f"\nTotal: ₹{totals.get('total', 0) // 100}"
+                f"\nItems:\n{item_lines or '  (none)'}"
+                f"\nFulfillment options:\n{opt_lines or '  (none yet)'}"
+            )
+
     try:
         client = SarvamClient()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail={"code": "sarvam_unavailable", "message": str(exc)}) from exc
 
-    sarvam_payload = {
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    f"You are a checkout assistant helping an Indian shopper complete their purchase. "
-                    f"Session ID: {session_id}. "
-                    f"Help with address collection, option selection, and payment questions. "
-                    f"Respond in language: {language}."
-                ),
-            },
-            {"role": "user", "content": user_message},
-        ],
-        "model": "sarvam-2b",
-    }
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a checkout assistant helping an Indian shopper complete their purchase via the Setu protocol. "
+                "Help the buyer select a shipping option, understand their order total, apply a coupon, or confirm their address. "
+                "Respond ONLY with a valid JSON object (no markdown, no extra text):\n"
+                '{"message": "response in the buyer\'s language", '
+                '"suggested_action": null | {"action": "select_fulfillment", "fulfillment_option_id": "..."} | '
+                '{"action": "apply_coupon", "coupon_code": "..."} | {"action": "confirm_order"}}'
+                + session_context
+            ),
+        },
+        {"role": "user", "content": f"Language: {language}\n{user_message}"},
+    ]
+
     try:
-        return client.request(sarvam_payload)
+        result = client.chat(messages, temperature=0.3, max_tokens=512)
     except SarvamAPIError as exc:
         _raise_sarvam_error(exc)
+
+    content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+    try:
+        import json as _json
+        parsed = _json.loads(content)
+    except (ValueError, KeyError):
+        parsed = {"message": content, "suggested_action": None}
+
+    return {
+        "session_id": session_id,
+        "language": language,
+        **parsed,
+    }
 
 
 @app.post("/webhooks/orders")
