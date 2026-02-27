@@ -50,12 +50,20 @@ class GSTMetadata(BaseModel):
     tax_rate_pct: float = 18.0
 
 
+BuyerAccountType = Literal["guest", "registered", "business"]
+BuyerAuthenticationStatus = Literal["unverified", "verified", "3ds_authenticated"]
+
+
 class Buyer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: Optional[str] = None
+    name: Optional[str] = None          # full name (for backward compatibility)
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
+    account_type: BuyerAccountType = "guest"
+    authentication_status: BuyerAuthenticationStatus = "unverified"
 
 
 class ItemInput(BaseModel):
@@ -140,6 +148,9 @@ class CancelSessionRequest(BaseModel):
     reason: Optional[str] = None
 
 
+AvailabilityStatus = Literal["in_stock", "out_of_stock", "low_stock", "preorder"]
+
+
 class CheckoutItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -147,6 +158,8 @@ class CheckoutItem(BaseModel):
     quantity: int
     title: Optional[str] = None
     image_url: Optional[str] = None
+    availability_status: AvailabilityStatus = "in_stock"
+    available_quantity: Optional[int] = None  # None = unlimited
 
 
 class CheckoutLineItem(BaseModel):
@@ -189,7 +202,7 @@ class FulfillmentOption(BaseModel):
     id: str
     title: str
     subtitle: str
-    # shipping + pickup
+    # shipping + pickup timing
     carrier: Optional[str] = None
     earliest_delivery_time: Optional[datetime] = None
     latest_delivery_time: Optional[datetime] = None
@@ -199,9 +212,8 @@ class FulfillmentOption(BaseModel):
     pickup_instructions: Optional[str] = None
     # digital-specific
     delivery_method: Optional[Literal["email", "download", "sms"]] = None
-    subtotal: int = Field(ge=0)
-    tax: int = Field(ge=0)
-    total: int = Field(ge=0)
+    # totals — same TotalsEntry pattern as CheckoutSession.totals
+    totals: List["TotalsEntry"] = []
 
 
 MessageSeverity = Literal["info", "low", "medium", "high", "critical"]
@@ -315,7 +327,15 @@ DiscountEntry = Union[AppliedDiscount, RejectedDiscount]
 class Link(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["privacy_policy", "terms_of_use", "support"]
+    type: Literal[
+        "privacy_policy",
+        "terms_of_use",
+        "support",
+        "return_policy",
+        "refund_policy",
+        "shipping_policy",
+        "seller_shop_policies",
+    ]
     url: str
 
 
@@ -334,7 +354,9 @@ CheckoutStatus = Literal[
     "ready_for_payment",
     "authentication_required",
     "pending_approval",
+    "complete_in_progress",   # payment submitted, async confirmation pending
     "completed",
+    "requires_escalation",    # needs manual intervention (fraud hold, review)
     "canceled",
     "expired",
 ]
@@ -346,6 +368,8 @@ class CheckoutSession(BaseModel):
     id: str
     status: CheckoutStatus
     currency: str = Field(min_length=3, max_length=3)
+    locale: Optional[str] = None       # e.g. "hi-IN", "en-IN"
+    timezone: Optional[str] = None     # e.g. "Asia/Kolkata"
     buyer_token: Optional[str] = None
     fulfillment_token: Optional[str] = None
     line_items: List[CheckoutLineItem]
@@ -356,6 +380,7 @@ class CheckoutSession(BaseModel):
     messages: List[Message]
     discounts: List[DiscountEntry] = []
     links: List[Link]
+    continue_url: Optional[str] = None  # web fallback URL if agent flow cannot complete
     created_at: datetime
     updated_at: datetime
     expires_at: Optional[datetime] = None
@@ -371,12 +396,22 @@ class OrderSummary(BaseModel):
 
     id: str
     status: str
+    checkout_session_id: str
+    confirmation_number: str          # human-readable reference, e.g. "ORD-2026-XXXXX"
+    total_amount: int                 # paise
+    currency: str
+    permalink_url: Optional[str] = None  # merchant-hosted order status page
     created_at: datetime
+    updated_at: datetime
+
+
+ErrorType = Literal["invalid_request", "not_found", "conflict", "server_error", "service_unavailable"]
 
 
 class ErrorBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    type: ErrorType = "invalid_request"
     code: str
     message: str
     field: Optional[str] = None

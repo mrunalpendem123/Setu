@@ -251,11 +251,24 @@ def _startup() -> None:
     logger.info("merchant_startup")
 
 
+def _error_type_for_status(status_code: int) -> str:
+    if status_code == 404:
+        return "not_found"
+    if status_code == 409:
+        return "conflict"
+    if status_code >= 500:
+        return "server_error"
+    if status_code == 503:
+        return "service_unavailable"
+    return "invalid_request"
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     detail = exc.detail if isinstance(exc.detail, dict) else {"message": exc.detail}
     payload = {
         "error": {
+            "type": _error_type_for_status(exc.status_code),
             "code": detail.get("code", "request_error"),
             "message": detail.get("message", detail.get("detail", str(detail))),
             "field": detail.get("field"),
@@ -268,6 +281,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     payload = {
         "error": {
+            "type": "invalid_request",
             "code": "validation_error",
             "message": "Request validation failed",
         }
@@ -365,6 +379,17 @@ def _get_shipping_amount(fulfillment_option_id: str | None) -> int:
     return 0
 
 
+def _make_fulfillment_totals(subtotal: int, tax: int) -> List[TotalsEntry]:
+    total = subtotal + tax
+    entries = []
+    if subtotal:
+        entries.append(TotalsEntry(type="subtotal", display_text="Shipping subtotal", amount=subtotal))
+    if tax:
+        entries.append(TotalsEntry(type="tax", display_text="Shipping tax", amount=tax))
+    entries.append(TotalsEntry(type="total", display_text="Shipping total", amount=total))
+    return entries
+
+
 def _is_valid_fulfillment_option(option_id: str) -> bool:
     return any(option["id"] == option_id for option in FULFILLMENT_OPTION_TEMPLATES)
 
@@ -374,8 +399,8 @@ def _build_fulfillment_options() -> List[FulfillmentOption]:
     options: List[FulfillmentOption] = []
     for opt in FULFILLMENT_OPTION_TEMPLATES:
         subtotal = int(opt["amount"])
-        total = subtotal
         ftype = opt["type"]
+        totals = _make_fulfillment_totals(subtotal, tax=0)
 
         if ftype == "shipping":
             earliest = now + timedelta(days=int(opt["min_days"]))
@@ -388,7 +413,7 @@ def _build_fulfillment_options() -> List[FulfillmentOption]:
                 carrier=opt["carrier"],
                 earliest_delivery_time=earliest,
                 latest_delivery_time=latest,
-                subtotal=subtotal, tax=0, total=total,
+                totals=totals,
             ))
         elif ftype == "pickup":
             earliest = now + timedelta(hours=2)
@@ -403,7 +428,7 @@ def _build_fulfillment_options() -> List[FulfillmentOption]:
                 pickup_instructions=opt.get("pickup_instructions"),
                 earliest_delivery_time=earliest,
                 latest_delivery_time=latest,
-                subtotal=subtotal, tax=0, total=total,
+                totals=totals,
             ))
         elif ftype == "digital":
             options.append(FulfillmentOption(
@@ -412,7 +437,7 @@ def _build_fulfillment_options() -> List[FulfillmentOption]:
                 title=opt["title"],
                 subtitle=opt["subtitle"],
                 delivery_method=opt.get("delivery_method"),
-                subtotal=subtotal, tax=0, total=total,
+                totals=totals,
             ))
     return options
 
@@ -629,10 +654,13 @@ async def create_checkout_session(
     fulfillment_token = payload.fulfillment_token
     status = _status_for_session(fulfillment_token, None)
     now = datetime.now(timezone.utc)
+    negotiated = _negotiate_capabilities(payload.capabilities)
     session = CheckoutSession(
         id=f"cs_{uuid4().hex}",
         status=status,
         currency="inr",
+        locale=negotiated.locale or os.getenv("MERCHANT_DEFAULT_LOCALE", "en-IN"),
+        timezone=negotiated.timezone or os.getenv("MERCHANT_DEFAULT_TIMEZONE", "Asia/Kolkata"),
         expires_at=_session_expires_at(now),
         buyer_token=payload.buyer_token,
         fulfillment_token=fulfillment_token,
@@ -644,9 +672,10 @@ async def create_checkout_session(
         messages=_messages_for_status(fulfillment_token, None),
         discounts=discount_entries,
         links=_build_links(),
+        continue_url=os.getenv("MERCHANT_CONTINUE_URL"),
         created_at=now,
         updated_at=now,
-        negotiated_capabilities=_negotiate_capabilities(payload.capabilities),
+        negotiated_capabilities=negotiated,
     )
 
     with get_db() as db:
@@ -980,10 +1009,20 @@ async def complete_checkout_session(
 
         now = datetime.now(timezone.utc)
         order_id = f"ord_{uuid4().hex}"
+        # confirmation_number: human-readable reference agents can surface to buyers
+        confirmation_number = f"ORD-{now.strftime('%Y%m%d')}-{order_id[-6:].upper()}"
+        merchant_orders_url = os.getenv("MERCHANT_ORDERS_URL")
+        permalink_url = f"{merchant_orders_url}/{order_id}" if merchant_orders_url else None
         order = OrderSummary(
             id=order_id,
             status="created",
+            checkout_session_id=session_id,
+            confirmation_number=confirmation_number,
+            total_amount=int(total_amount),
+            currency=payment_currency or "inr",
+            permalink_url=permalink_url,
             created_at=now,
+            updated_at=now,
         )
 
         session_data["status"] = "completed"

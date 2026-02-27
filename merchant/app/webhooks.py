@@ -6,7 +6,9 @@ import hmac
 import json
 import os
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict
+from uuid import uuid4
 
 import httpx
 
@@ -42,7 +44,14 @@ def send_order_event(event_type: str, payload: Dict[str, Any]) -> None:
 
     secret = os.getenv("ORDER_WEBHOOK_SECRET", "")
     event_name = _format_event_name(event_type)
-    body = json.dumps({"type": event_name, "data": payload}).encode()
+    event = {
+        "id": f"evt_{uuid4().hex}",
+        "type": event_name,
+        "version": "2026-02-24",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "data": payload,
+    }
+    body = json.dumps(event).encode()
     headers = {"Content-Type": "application/json"}
 
     if secret:

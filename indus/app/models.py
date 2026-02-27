@@ -43,9 +43,13 @@ class Address(BaseModel):
 class Buyer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: Optional[str] = None
+    name: Optional[str] = None          # full name (for backward compatibility)
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
+    account_type: Optional[str] = "guest"           # guest | registered | business
+    authentication_status: Optional[str] = "unverified"  # unverified | verified | 3ds_authenticated
 
 
 class ItemInput(BaseModel):
