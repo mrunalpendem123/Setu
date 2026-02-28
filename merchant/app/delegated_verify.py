@@ -19,7 +19,7 @@ def _api_key() -> str | None:
 
 
 def _api_version() -> str:
-    return os.getenv("DELEGATED_PSP_API_VERSION", "2025-09-29")
+    return os.getenv("DELEGATED_PSP_API_VERSION", "2026-02-24")
 
 
 def verify_delegated_token(token: str, amount: int, currency: str) -> Tuple[bool, str]:

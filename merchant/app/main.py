@@ -42,6 +42,7 @@ from .models import (
     NegotiatedCapabilities,
 )
 from .payment_verify import verify_hyperswitch_payment
+from .delegated_verify import verify_delegated_token
 from .indus_client import IndusClient, IndusClientError
 from .security import validate_request
 from .webhooks import send_order_event
@@ -954,6 +955,10 @@ async def complete_checkout_session(
         if not token:
             raise HTTPException(status_code=400, detail={"code": "missing_payment_token", "message": "Missing payment token"})
 
+        # Delegated payment tokens (vt_...) are redeemed via the PSP; all other
+        # tokens are verified directly against Hyperswitch.
+        is_delegated = token.startswith("vt_")
+
         # pending_approval: merchant must review before charging (B2B / high-value orders)
         if payment.approval_required:
             now = datetime.now(timezone.utc)
@@ -971,11 +976,18 @@ async def complete_checkout_session(
             db.commit()
             return _apply_idempotency(request, response, body, session_data, status_code=200, store=store)
 
-        verified, reason = verify_hyperswitch_payment(
-            payment_id=token,
-            amount=int(total_amount),
-            currency=payment_currency or "",
-        )
+        if is_delegated:
+            verified, reason = verify_delegated_token(
+                token=token,
+                amount=int(total_amount),
+                currency=payment_currency or "",
+            )
+        else:
+            verified, reason = verify_hyperswitch_payment(
+                payment_id=token,
+                amount=int(total_amount),
+                currency=payment_currency or "",
+            )
         if not verified:
             if reason == "requires_3ds":
                 now = datetime.now(timezone.utc)
