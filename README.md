@@ -1,173 +1,194 @@
-# Setu
+# Setu — Agentic Commerce Protocol for India
 
-> An open protocol for AI agents to complete purchases in India — without navigating a browser.
+> AI agents that shop for you, built for India's payment stack.
 
 ---
 
 ## What is Setu?
 
-**Setu** is an agentic commerce protocol for India.
+**Setu** is an open protocol that lets AI agents complete purchases on behalf of users — without opening a browser, filling forms, or navigating checkout flows.
 
-It gives merchants a set of REST API endpoints that AI agents can call to complete a purchase — instead of agents trying to navigate a web browser through a checkout form.
-
-Today, if an AI agent wants to buy something for you, it has to:
-- Open a browser
-- Click through product pages
-- Fill in address forms
-- Handle payment redirects
-- Hope nothing breaks mid-flow
-
-**Setu replaces all of that.** A merchant implements 5 API endpoints. An agent calls them in sequence. The purchase is done.
+The **agent** in Setu is **Indus** — powered by **Sarvam-M**, India's multilingual AI model. Think of it exactly like ChatGPT's shopping feature, but built for India: it speaks Hindi, Tamil, Telugu, Kannada, and 7 other Indian languages, and pays natively via UPI and Hyperswitch instead of Stripe.
 
 ```
-Agent → POST /checkout_sessions                   (create cart)
-Agent → POST /checkout_sessions/{id}              (select shipping)
-Agent → POST /delegate_payment                    (get a one-time payment token)
-Agent → POST /checkout_sessions/{id}/complete     (pay + confirm order)
-```
+User says: "ek white kurta dikhao under 1500 mein"
 
-The **human still approves** — through the agent's UI, not through a merchant's website. The **merchant stays merchant of record**. The **payment token is scoped** — it can only charge the exact amount, in the exact currency, once.
+Indus (Sarvam AI):
+  1. Understands the request in Hindi
+  2. Fetches product feed from merchant
+  3. Shows options, user picks one
+  4. Collects address & payment info
+  5. Creates payment via Hyperswitch (UPI / card)
+  6. Completes checkout with merchant
+  7. Order confirmed — no browser opened
+```
 
 ---
 
-## Why India needs its own protocol
+## Architecture
 
-Existing agentic commerce flows are built around western payment rails — cards and bank transfers via Stripe.
+```
+┌──────────────────────────────────────────────────────┐
+│                        User                          │
+│          chat & shop  │  payment card / UPI info     │
+└──────────────────────┬───────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────┐
+│           Indus  /  Sarvam-M  (the Agent)            │
+│                                                      │
+│  • Understands 11 Indic languages (Sarvam-M)         │
+│  • Manages checkout session state                    │
+│  • Issues scoped buyer/fulfillment tokens            │
+│  • Orchestrates merchant + Hyperswitch calls         │
+└───────────────┬──────────────────┬───────────────────┘
+                │                  │
+   Product Feed │                  │ Get Payment Token
+   Checkout     │                  │ (UPI / card / netbanking)
+                ▼                  ▼
+       ┌──────────────┐   ┌────────────────────┐
+       │   Merchant   │   │  Hyperswitch (PSP) │
+       │              │   │                    │
+       │ /checkout_   │   │ POST /payments     │
+       │  sessions    │   │ → payment_id       │
+       │              │   │   + client_secret  │
+       │ Verifies  ───┼──►│ GET /payments/{id} │
+       │ payment      │   │                    │
+       │              │   └────────────────────┘
+       │ Order webhook│
+       └──────┬───────┘
+              │
+              ▼
+         User / webhook endpoint
+         (order updates)
+```
 
-India's payment reality is different:
+Setu implements the same pattern as ChatGPT's shopping agent — substituting India's stack:
 
-| Reality | Why it matters |
+| ChatGPT Shopping | Setu |
 |---|---|
-| **70%+ of digital payments are UPI** | Generic payment handlers don't support UPI collect / intent / QR natively |
-| **Hyperswitch covers all Indian rails** | UPI, RuPay, NetBanking, cards — one API |
-| **Sarvam AI speaks Indian languages** | Hindi, Tamil, Telugu, Kannada — buyers don't always shop in English |
-| **GST is mandatory on B2B** | Line items need HSN codes + GSTIN, not just a subtotal |
-| **PIN codes have strict formats** | `^[1-9][0-9]{5}$` — generic address models fail silently |
-
-**Setu is built for this stack from the ground up.**
-
----
-
-## What Setu defines
-
-| Dimension | Setu |
-|---|---|
-| Payment handler | **Hyperswitch** (UPI + cards + NetBanking) |
-| Agent layer | **Sarvam AI** (multilingual, India-first) |
-| Payment methods | **UPI collect, UPI intent, UPI QR, cards** |
-| Address format | **Indian PIN code** + state validation |
-| Tax metadata | **GST** — GSTIN, HSN codes, 18% default |
-| Currency | **INR in paise** |
-
----
-
-## Repo structure
-
-```
-spec/          ← protocol definition (OpenAPI + JSON Schema)
-rfc/           ← design decisions and rationale
-docs/          ← India profile, configuration reference
-examples/      ← concrete request/response walkthroughs
-
-indus/         ← reference: Indus orchestrator (agent-side)
-merchant/      ← reference: merchant service (seller-side)
-payments/      ← reference: Hyperswitch proxy (Rust)
-psp/           ← reference: delegated payment handler stub
-
-deploy/        ← Docker Compose (if you want containers)
-scripts/       ← dev helpers
-```
-
-The **spec, rfc, docs, and examples are the protocol**. The code proves it works.
+| ChatGPT (GPT-4) | Indus (Sarvam-M, 11 Indic languages) |
+| Stripe | Hyperswitch (UPI + RuPay + NetBanking + cards) |
+| English only | Hindi, Tamil, Telugu, Kannada + 7 more |
+| USD / EUR | INR (paise), GST-aware |
 
 ---
 
 ## How the flow works
 
-### Step 1 — Agent creates a checkout session
+### Step 1 — Agent fetches product feed
 
 ```
-Agent → POST http://merchant.com/checkout_sessions
-Body: { items, buyer, fulfillment_address }
+Indus → GET http://merchant.com/product_feed
 
-Merchant responds: {
+Merchant: [{ id, title, price_inr, hsn_code, gst_rate, ... }]
+```
+
+### Step 2 — Agent creates a checkout session
+
+```
+Indus → POST http://merchant.com/checkout_sessions
+{
+  items: [{ id: "item_456", quantity: 1 }],
+  buyer_token: "btok_...",         ← encrypted token; Indus holds the PII
+  fulfillment_token: "ftok_..."    ← encrypted token; Indus holds the address
+}
+
+Merchant: {
   id: "cs_abc",
-  status: "not_ready_for_payment",   ← missing shipping option
+  status: "not_ready_for_payment",
   line_items: [...],
   totals: { subtotal: 129900, tax: 23382, total: 153282 },  // paise
   fulfillment_options: [
-    { id: "standard", title: "3-5 days", total: 0 },
-    { id: "express",  title: "1-2 days", total: 4900 }
+    { id: "standard", title: "3–5 days", cost: 0 },
+    { id: "express",  title: "1–2 days", cost: 4900 }
   ],
-  payment_handlers: [{ id: "hyperswitch.upi", ... }]
+  payment_handlers: [{ id: "com.hyperswitch.upi", ... }]
 }
 ```
 
-### Step 2 — Agent picks shipping → session becomes ready
+### Step 3 — Agent selects shipping → session becomes ready
 
 ```
-Agent → POST http://merchant.com/checkout_sessions/cs_abc
-Body: { fulfillment_option_id: "express" }
+Indus → POST http://merchant.com/checkout_sessions/cs_abc
+{ fulfillment_option_id: "express" }
 
-Merchant responds: { status: "ready_for_payment", totals: { total: 158182 } }
+Merchant: { status: "ready_for_payment", totals: { total: 158182 } }
 ```
 
-### Step 3 — Agent gets a scoped payment token from Hyperswitch
+### Step 4 — Agent creates payment via Hyperswitch
 
 ```
-Agent → POST http://hyperswitch.com/agentic_commerce/delegate_payment
-Body: {
-  payment_method: { type: "upi", vpa: "raj@upi" },
-  allowance: {
-    reason: "one_time",
-    max_amount: 158182,
-    currency: "inr",
-    checkout_session_id: "cs_abc",
-    merchant_id: "merchant_xyz",
-    expires_at: "2026-02-27T10:30:00Z"
-  },
-  risk_signals: [{ type: "card_testing", score: 0, action: "authorized" }],
-  metadata: {}
+Indus → POST https://sandbox.hyperswitch.io/payments
+{
+  amount: 158182,
+  currency: "INR",
+  payment_method: "upi",
+  payment_method_type: "upi_collect",
+  payment_method_data: { upi: { vpa_id: "raj@upi" } },
+  metadata: { checkout_session_id: "cs_abc" }   ← links payment to session
 }
 
-Hyperswitch responds: { id: "vt_xyz", status: "issued" }
-// This token can ONLY charge ₹1581.82, once, for this session, before expiry.
+Hyperswitch: {
+  payment_id: "pay_xyz",
+  client_secret: "...",
+  status: "requires_customer_action"   ← user approves in their UPI app
+}
 ```
 
-### Step 4 — Agent completes the checkout with that token
+### Step 5 — Agent completes checkout with merchant
 
 ```
-Agent → POST http://merchant.com/checkout_sessions/cs_abc/complete
-Body: { payment_handler_id: "hyperswitch.upi", payment_token: "dpt_xyz" }
+Indus → POST http://merchant.com/checkout_sessions/cs_abc/complete
+{ payment_data: { provider: "hyperswitch", token: "pay_xyz" } }
 
-Merchant calls Hyperswitch internally → verifies → creates order
-Merchant responds: { order_id: "ord_123", status: "completed" }
+Merchant internally:
+  1. Redeems buyer_token      → Indus  (fetches buyer name/email)
+  2. Redeems fulfillment_token → Indus (fetches delivery address)
+  3. Verifies payment status   → Hyperswitch GET /payments/pay_xyz
+  4. Creates order, fires order.created webhook
+
+Merchant: { order_id: "ord_123", status: "completed" }
 ```
 
-**4 API calls. No browser. No form. No redirect.**
+**5 steps. No browser. No form. No redirect.**
 
 ---
 
-## India-specific extensions
+## UPI async flow (requires_customer_action)
 
-### UPI flows
+UPI payments don't confirm immediately — the user must approve on their phone. Setu handles this automatically:
+
+```
+Step 4 → Hyperswitch returns status: "requires_customer_action"
+Step 5 → Merchant sets session to "awaiting_payment"
+
+[User opens UPI app and approves]
+
+Hyperswitch fires: POST /webhooks/hyperswitch  (on merchant)
+  → Merchant creates order automatically
+  → Fires order.created webhook
+  → Agent sees order_id in next poll
+```
+
+---
+
+## India-specific features
+
+### All three UPI variants
 
 ```jsonc
-// Step 3 has three UPI variants:
-{ "type": "upi_collect", "vpa": "raj@upi" }   // agent knows buyer's VPA
-{ "type": "upi_intent" }                        // deep-link to UPI app (mobile)
-{ "type": "upi_qr" }                            // show QR code (desktop/kiosk)
-
-// All three return status: "requires_customer_action"
-// = user is approving on their phone — not a failure, a valid pending state
+{ "payment_method_type": "upi_collect", "vpa_id": "raj@upi" }  // pull from VPA
+{ "payment_method_type": "upi_intent"  }                        // deep-link to app
+{ "payment_method_type": "upi_qr"      }                        // QR code
 ```
 
 ### Indian address validation
 
 ```jsonc
 {
-  "country": "IN",                  // must be IN
-  "postal_code": "560001",          // ^[1-9][0-9]{5}$  (no leading zero)
+  "country": "IN",
+  "postal_code": "560001",          // ^[1-9][0-9]{5}$
   "phone_number": "+919876543210"   // ^+91[6-9]\d{9}$
 }
 ```
@@ -179,57 +200,67 @@ Merchant responds: { order_id: "ord_123", status: "completed" }
   "gst_metadata": {
     "hsn_code": "85183000",
     "tax_label": "GST",
-    "tax_rate_pct": 18.0
+    "tax_rate_pct": 18.0,
+    "gstin": "29ABCDE1234F1Z5"   // optional, for B2B
   }
 }
 ```
 
-### Sarvam AI checkout assistant
+### Sarvam multilingual checkout
 
 ```bash
-# Buyer says: "1000 rupee ke andar headphones chahiye"
+# "1000 rupee ke andar headphones chahiye" (Hindi)
 POST /indus/sarvam/product_search
-{ "query": "1000 rupee ke andar headphones", "language": "hi", "merchant_base_url": "..." }
-
-# Buyer says: "mujhe express delivery chahiye"
-POST /indus/sarvam/checkout_assist
-{ "session_id": "cs_abc", "user_message": "express delivery chahiye", "language": "hi" }
-```
-
----
-
-## Capability negotiation
-
-```bash
-curl http://localhost:8000/indus/capabilities
-```
-```json
 {
-  "protocol_version": "2026-02-24",
-  "payment_providers": ["hyperswitch"],
-  "payment_methods": ["card", "upi", "netbanking"],
-  "token_ttl_seconds": 86400,
-  "fulfillment_types": ["shipping"],
-  "extensions": ["india_gst", "upi_vpa"]
+  "query": "1000 rupee ke andar headphones chahiye",
+  "language": "hi",
+  "merchant_base_url": "http://merchant.example.com"
 }
 ```
 
 ---
 
-## Quick start (no Docker, no Postgres)
+## Repo structure
 
-```bash
-git clone https://github.com/mrunalpendem123/Setu.git && cd Setu
-./scripts/run_dev.sh
+```
+indus/         ← Indus — the Sarvam-powered agent runtime (port 8000)
+merchant/      ← Reference merchant service — ACP checkout endpoints (port 8001)
+payments/      ← Hyperswitch proxy in Rust — optional, for scalability (port 9000)
+psp/           ← Delegated payment stub — for vt_* token flows (port 8002)
+
+spec/          ← Protocol definition (OpenAPI + JSON Schema)
+rfc/           ← Design decisions and rationale
+docs/          ← India profile, configuration reference
+examples/      ← Concrete request/response walkthroughs
+deploy/        ← Docker Compose for the full stack
+demo/          ← Sarvam Shopping Playground (single-file live demo)
+scripts/       ← Dev helpers
 ```
 
+---
+
+## Quick start
+
 ```bash
-# In another terminal — full checkout for Raj Kumar, Bengaluru
+git clone https://github.com/your-org/setu.git && cd setu
+
+# Fill in your API keys
+cp .env.example .env
+# HYPERSWITCH_API_KEY=...   (get from sandbox.hyperswitch.io)
+# SARVAM_API_KEY=...        (get from dashboard.sarvam.ai)
+
+# Start all services
+cd deploy && docker compose up --build
+```
+
+Then run a full checkout:
+
+```bash
 curl -s -X POST http://localhost:8000/indus/checkout \
   -H "Content-Type: application/json" \
   -d '{
     "merchant_base_url": "http://localhost:8001",
-    "items": [{"id": "item_456", "quantity": 1}],
+    "items": [{ "id": "item_001", "quantity": 1 }],
     "buyer": { "name": "Raj Kumar", "email": "raj@example.com" },
     "fulfillment_address": {
       "name": "Raj Kumar", "line_one": "12 MG Road",
@@ -240,30 +271,75 @@ curl -s -X POST http://localhost:8000/indus/checkout \
   }' | python3 -m json.tool
 ```
 
-See `examples/` for the full sequence.
+See `examples/` for the complete flow with payment and completion.
 
 ---
 
-## Spec and RFCs
+## Try the demo
 
-| File | What it covers |
+```bash
+cd demo
+pip install -r requirements.txt
+export SARVAM_API_KEY=your_key
+python server.py
+# Open http://localhost:3000
+```
+
+Chat in any Indian language, browse products, pay with UPI or card (Fauxpay test cards included).
+
+---
+
+## Services
+
+| Service | Port | Role |
+|---|---|---|
+| **Indus** | 8000 | Sarvam-powered agent — the brain of the operation |
+| **Merchant** | 8001 | ACP checkout endpoints, product feed, order management |
+| **Payments** (Rust) | 9000 | Hyperswitch proxy — optional, for high-throughput deployments |
+| **PSP stub** | 8002 | Delegated token endpoint — for `vt_*` pre-authorized payment tokens |
+| **Postgres** | 5432 | Persistent store for sessions, payments, tokens, orders |
+
+---
+
+## Essential env vars
+
+```bash
+# Hyperswitch (required)
+HYPERSWITCH_API_KEY=your_key
+HYPERSWITCH_BASE_URL=https://sandbox.hyperswitch.io
+
+# Sarvam AI (required for multilingual features)
+SARVAM_API_KEY=your_key
+SARVAM_BASE_URL=https://api.sarvam.ai
+
+# Database
+DATABASE_URL=postgresql+psycopg://setu:setu@localhost:5432/indus
+
+# Service auth
+INDUS_API_KEYS=demo_key      # merchant → indus token redemption
+INDUS_API_KEY=demo_key       # indus → merchant calls
+
+# Webhooks
+ORDER_WEBHOOK_URL=https://your-endpoint.example.in/webhook
+ORDER_WEBHOOK_SECRET=your_secret
+HYPERSWITCH_WEBHOOK_SECRET=your_hs_secret
+```
+
+Full reference: `.env.example` and `docs/configuration.md`.
+
+---
+
+## Docs
+
+| | |
 |---|---|
-| `spec/2026-02-24/openapi/indus.yaml` | Indus orchestrator API (agent-side) |
-| `spec/2026-02-24/openapi/merchant.yaml` | Merchant checkout API |
+| `docs/protocol-overview.md` | Roles, session state machine, extension points |
+| `docs/india-profile.md` | UPI, GST, PIN codes — full India spec |
+| `docs/hyperswitch.md` | Hyperswitch integration guide |
+| `docs/configuration.md` | Every env var, every service |
 | `rfc/agentic-checkout.md` | Core checkout flow design |
-| `rfc/capability-negotiation.md` | Capability discovery |
-| `rfc/payment-handlers.md` | Hyperswitch handler binding |
-| `rfc/discounts.md` | Coupon and discount extension |
-| `rfc/merchant-registry.md` | Merchant discovery |
-| `docs/india-profile.md` | Full India profile spec |
-| `docs/protocol-overview.md` | Roles, state model, extension points |
-
----
-
-## Configuration
-
-See [`docs/configuration.md`](docs/configuration.md).
-For Docker deployment, see [`deploy/`](deploy/).
+| `rfc/payment-handlers.md` | `com.hyperswitch.upi` handler binding |
+| `examples/` | Full request/response walkthroughs |
 
 ---
 

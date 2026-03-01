@@ -429,6 +429,68 @@ def complete_checkout(
     )
 
 
+@app.post("/indus/checkout/{session_id}/refund")
+def refund_checkout(
+    session_id: str,
+    payload: Dict[str, Any] = Body(default={}),
+) -> Dict[str, Any]:
+    """
+    Refund a completed checkout session.
+    Looks up the payment_id from the IndusPayment record for this session,
+    then calls Hyperswitch POST /refunds.
+
+    Body (all optional):
+      amount   – paise; omit for full refund
+      reason   – customer_initiated | duplicate | fraudulent
+      metadata – pass-through metadata
+    """
+    with get_db() as db:
+        record = db.get(SessionRecord, session_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="unknown_session")
+        # Find the most recent payment for this session via metadata
+        payment_record = (
+            db.query(PaymentRecord)
+            .filter(PaymentRecord.data["metadata"]["checkout_session_id"].as_string() == session_id)
+            .order_by(PaymentRecord.created_at.desc())
+            .first()
+        )
+    if not payment_record:
+        raise HTTPException(status_code=404, detail="no_payment_found_for_session")
+
+    refund_payload = {**payload, "payment_id": payment_record.payment_id}
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.create_refund(payment_record.payment_id, refund_payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
+    hs = HyperswitchClient()
+    try:
+        return hs.create_refund(payment_record.payment_id, refund_payload)
+    except HyperswitchAPIError as exc:
+        _raise_hyperswitch_error(exc)
+
+
+@app.post("/indus/payments/{payment_id}/refunds")
+def hyperswitch_create_refund(
+    payment_id: str,
+    payload: Dict[str, Any] = Body(default={}),
+) -> Dict[str, Any]:
+    """Direct Hyperswitch refund passthrough (when caller already has payment_id)."""
+    if payments_service_enabled():
+        client = PaymentsServiceClient()
+        try:
+            return client.create_refund(payment_id, payload)
+        except PaymentsServiceError as exc:
+            _raise_payments_error(exc)
+    hs = HyperswitchClient()
+    try:
+        return hs.create_refund(payment_id, payload)
+    except HyperswitchAPIError as exc:
+        _raise_hyperswitch_error(exc)
+
+
 @app.post("/indus/tokens/{token}/redeem", response_model=TokenRedeemResponse)
 def redeem_token(
     token: str,

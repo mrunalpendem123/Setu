@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import json
+import hmac
+import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
@@ -45,7 +48,7 @@ from .payment_verify import verify_hyperswitch_payment
 from .delegated_verify import verify_delegated_token
 from .indus_client import IndusClient, IndusClientError
 from .security import validate_request
-from .webhooks import send_order_event
+from .webhooks import send_order_event, warn_if_webhook_insecure
 from .rate_limit import RateLimiter
 from .audit import log_event
 
@@ -249,6 +252,7 @@ async def rate_limit_middleware(request: Request, call_next):
 @app.on_event("startup")
 def _startup() -> None:
     init_db()
+    warn_if_webhook_insecure()
     logger.info("merchant_startup")
 
 
@@ -989,6 +993,14 @@ async def complete_checkout_session(
                 currency=payment_currency or "",
             )
         if not verified:
+            if reason == "delegated_psp_not_configured":
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "code": "delegated_psp_unavailable",
+                        "message": "Delegated payment service is not configured on this merchant",
+                    },
+                )
             if reason == "requires_3ds":
                 now = datetime.now(timezone.utc)
                 session_data["status"] = "authentication_required"
@@ -1006,6 +1018,53 @@ async def complete_checkout_session(
                 db.commit()
                 return _apply_idempotency(request, response, body, session_data, status_code=200, store=store)
             raise HTTPException(status_code=400, detail={"code": "payment_not_verified", "message": f"Payment not verified: {reason}"})
+
+        # UPI / netbanking — payment exists but user hasn't approved yet on device.
+        # Capture buyer/fulfillment data now (tokens may expire before webhook fires),
+        # put session into awaiting_payment, and let the Hyperswitch webhook finalise.
+        if reason == "pending_customer_action":
+            now = datetime.now(timezone.utc)
+            # Eagerly redeem tokens so the data is available when the webhook arrives
+            if buyer_token and not buyer:
+                try:
+                    buyer = _redeem_token(buyer_token, "buyer")
+                except Exception:
+                    pass
+            if fulfillment_token and not fulfillment_address:
+                try:
+                    fulfillment_address = _redeem_token(fulfillment_token, "fulfillment")
+                except Exception:
+                    pass
+            if buyer:
+                session_data["buyer"] = buyer
+            if fulfillment_address:
+                session_data["fulfillment_address"] = fulfillment_address
+            session_data["status"] = "awaiting_payment"
+            session_data["pending_payment_id"] = token
+            session_data["updated_at"] = now.isoformat()
+            session_data["messages"] = jsonable_encoder([
+                InfoMessage(
+                    severity="medium",
+                    content="Waiting for customer to approve the payment. The order will be confirmed automatically once payment succeeds.",
+                )
+            ])
+            row.status = "awaiting_payment"
+            row.updated_at = now
+            row.data = session_data
+            db.commit()
+            log_event(db, "payment_pending_customer_action", session_id, {
+                "payment_id": token,
+                "amount": int(total_amount),
+                "currency": payment_currency,
+            })
+            awaiting_resp = {
+                "id": session_id,
+                "status": "awaiting_payment",
+                "pending_payment_id": token,
+                "messages": session_data["messages"],
+            }
+            _set_common_headers(request, response)
+            return _apply_idempotency(request, response, body, awaiting_resp, status_code=200, store=store)
 
         log_event(
             db,
@@ -1104,7 +1163,17 @@ async def update_order(
     request: Request,
 ) -> JSONResponse:
     body = await request.body()
-    validate_request(request, body)
+    # update_order is a privileged write — always require an API key.
+    # If INDUS_API_KEYS is not configured the service is mis-deployed; fail closed.
+    api_keys = {k.strip() for k in os.getenv("INDUS_API_KEYS", "").split(",") if k.strip()}
+    if not api_keys:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "auth_not_configured", "message": "INDUS_API_KEYS must be set to use this endpoint"},
+        )
+    token = request.headers.get("X-Indus-Key")
+    if not token or token not in api_keys:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "Invalid API key"})
     payload = await request.json()
     new_status = payload.get("status")
     if not new_status:
@@ -1134,6 +1203,198 @@ async def update_order(
     )
 
     return JSONResponse(content=order_data, status_code=200)
+
+
+@app.post("/webhooks/hyperswitch")
+async def hyperswitch_webhook(request: Request) -> JSONResponse:
+    """
+    Receive payment lifecycle events from Hyperswitch.
+    Used to finalise orders for async payment methods (UPI, netbanking)
+    that return requires_customer_action at /complete time.
+
+    Configure in Hyperswitch dashboard:
+      URL  → https://<merchant-host>/webhooks/hyperswitch
+      Set HYPERSWITCH_WEBHOOK_SECRET env var to the secret shown there.
+    """
+    body = await request.body()
+
+    # Verify HMAC-SHA512 signature when a secret is configured
+    webhook_secret = os.getenv("HYPERSWITCH_WEBHOOK_SECRET")
+    if webhook_secret:
+        sig = (
+            request.headers.get("x-webhook-signature-512")
+            or request.headers.get("x-signature")
+        )
+        if not sig:
+            raise HTTPException(status_code=401, detail="missing_webhook_signature")
+        expected = hmac.new(
+            webhook_secret.encode(), body, hashlib.sha512
+        ).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            raise HTTPException(status_code=401, detail="invalid_webhook_signature")
+
+    try:
+        event = json.loads(body)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_json")
+
+    event_type = event.get("event_type", "")
+    payment_obj: Dict[str, Any] = (event.get("content") or {}).get("object") or {}
+    payment_id: str = payment_obj.get("payment_id", "")
+    metadata: Dict[str, Any] = payment_obj.get("metadata") or {}
+    session_id: str = metadata.get("checkout_session_id", "")
+
+    logger.info("hyperswitch_webhook event=%s payment_id=%s session_id=%s", event_type, payment_id, session_id)
+
+    if not session_id:
+        # Cannot correlate — acknowledge and move on
+        return JSONResponse(content={"received": True})
+
+    if event_type == "payment_succeeded":
+        _webhook_handle_payment_succeeded(session_id, payment_id, payment_obj)
+    elif event_type in ("payment_failed", "payment_cancelled"):
+        _webhook_handle_payment_failed(session_id, payment_id, event_type)
+
+    return JSONResponse(content={"received": True})
+
+
+def _webhook_handle_payment_succeeded(
+    session_id: str, payment_id: str, payment_obj: Dict[str, Any]
+) -> None:
+    """Create the order for a session that was left in awaiting_payment state."""
+    with get_db() as db:
+        row = db.get(CheckoutSessionModel, session_id)
+        if not row:
+            logger.warning("webhook: session %s not found", session_id)
+            return
+
+        session_data: Dict[str, Any] = dict(row.data)
+
+        if session_data.get("status") != "awaiting_payment":
+            # Already completed or cancelled — idempotent, skip
+            return
+
+        stored_pid = session_data.get("pending_payment_id")
+        if stored_pid and stored_pid != payment_id:
+            logger.warning(
+                "webhook: payment_id mismatch session=%s stored=%s received=%s",
+                session_id, stored_pid, payment_id,
+            )
+            return
+
+        totals = session_data.get("totals", [])
+        total_amount = next(
+            (t.get("amount") for t in totals if t.get("type") == "total"), None
+        )
+        payment_currency = session_data.get("currency")
+
+        # Buyer / fulfillment — eagerly-redeemed data lives in session_data;
+        # fall back to redeeming tokens if the data isn't there yet.
+        buyer: Dict[str, Any] | None = session_data.get("buyer")
+        fulfillment_address: Dict[str, Any] | None = session_data.get("fulfillment_address")
+
+        if not buyer and session_data.get("buyer_token"):
+            try:
+                buyer = _redeem_token(session_data["buyer_token"], "buyer")
+            except Exception:
+                pass
+        if not fulfillment_address and session_data.get("fulfillment_token"):
+            try:
+                fulfillment_address = _redeem_token(session_data["fulfillment_token"], "fulfillment")
+            except Exception:
+                pass
+
+        if not fulfillment_address:
+            logger.error("webhook: no fulfillment address for session %s — cannot create order", session_id)
+            return
+
+        now = datetime.now(timezone.utc)
+        order_id = f"ord_{uuid4().hex}"
+        confirmation_number = f"ORD-{now.strftime('%Y%m%d')}-{order_id[-6:].upper()}"
+        merchant_orders_url = os.getenv("MERCHANT_ORDERS_URL")
+        permalink_url = f"{merchant_orders_url}/{order_id}" if merchant_orders_url else None
+
+        order = OrderSummary(
+            id=order_id,
+            status="created",
+            checkout_session_id=session_id,
+            confirmation_number=confirmation_number,
+            total_amount=int(total_amount) if total_amount is not None else 0,
+            currency=payment_currency or "inr",
+            permalink_url=permalink_url,
+            created_at=now,
+            updated_at=now,
+        )
+
+        session_data["status"] = "completed"
+        if buyer:
+            session_data["buyer"] = buyer
+        session_data["fulfillment_address"] = fulfillment_address
+        session_data["order"] = jsonable_encoder(order)
+        session_data["updated_at"] = now.isoformat()
+
+        row.status = "completed"
+        row.updated_at = now
+        row.data = session_data
+        db.merge(
+            OrderModel(
+                id=order_id,
+                checkout_session_id=session_id,
+                status="created",
+                data=session_data["order"],
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        log_event(db, "order_created", order_id, {
+            "checkout_session_id": session_id,
+            "status": "created",
+            "total_amount": total_amount,
+            "currency": payment_currency,
+            "source": "hyperswitch_webhook",
+        })
+        db.commit()
+
+        send_order_event("order.created", {
+            "order_id": order_id,
+            "checkout_session_id": session_id,
+            "status": "created",
+            "total_amount": total_amount,
+            "currency": payment_currency,
+        })
+        logger.info("webhook: order %s created for session %s via payment %s", order_id, session_id, payment_id)
+
+
+def _webhook_handle_payment_failed(
+    session_id: str, payment_id: str, event_type: str
+) -> None:
+    """Mark session as payment_failed so the agent can retry."""
+    with get_db() as db:
+        row = db.get(CheckoutSessionModel, session_id)
+        if not row:
+            return
+
+        session_data: Dict[str, Any] = dict(row.data)
+        if session_data.get("status") != "awaiting_payment":
+            return
+
+        now = datetime.now(timezone.utc)
+        session_data["status"] = "payment_failed"
+        session_data["updated_at"] = now.isoformat()
+        session_data["messages"] = jsonable_encoder([
+            ErrorMessage(
+                code="payment_failed",
+                severity="high",
+                content="The UPI payment was not completed. Please try again with a different payment method.",
+                param="payment_data.token",
+            )
+        ])
+        row.status = "payment_failed"
+        row.updated_at = now
+        row.data = session_data
+        db.commit()
+        log_event(db, event_type, session_id, {"payment_id": payment_id})
+        logger.info("webhook: session %s marked payment_failed (event=%s)", session_id, event_type)
 
 
 @app.get("/product_feed")

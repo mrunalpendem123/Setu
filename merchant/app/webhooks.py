@@ -37,6 +37,19 @@ def _format_event_name(event_type: str) -> str:
     return event_type
 
 
+def warn_if_webhook_insecure() -> None:
+    """Call at app startup — logs a warning if webhook is configured without a signing secret."""
+    import logging as _log
+    url = os.getenv("ORDER_WEBHOOK_URL")
+    secret = os.getenv("ORDER_WEBHOOK_SECRET", "")
+    if url and not secret:
+        _log.getLogger("merchant.webhooks").warning(
+            "ORDER_WEBHOOK_URL is set but ORDER_WEBHOOK_SECRET is not. "
+            "Webhook events will be sent unsigned — any receiver cannot verify their authenticity. "
+            "Set ORDER_WEBHOOK_SECRET to enable HMAC-SHA256 request signing."
+        )
+
+
 def send_order_event(event_type: str, payload: Dict[str, Any]) -> None:
     url = os.getenv("ORDER_WEBHOOK_URL")
     if not url:

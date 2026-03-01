@@ -197,6 +197,11 @@ class HyperswitchClient:
     def complete_authorize(self, payment_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self._request("POST", f"/payments/{payment_id}/complete_authorize", payload=payload)
 
+    def create_refund(self, payment_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Issue a full or partial refund. payload must include amount (paise) and currency."""
+        body = {"payment_id": payment_id, **payload}
+        return self._request("POST", "/refunds", payload=body)
+
     def update_metadata(self, payment_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self._request("POST", f"/payments/{payment_id}/update_metadata", payload=payload)
 
