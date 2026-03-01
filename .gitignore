@@ -31,3 +31,7 @@ build/
 # Rust
 target/
 payments/target/
+
+# Local demo and video projects
+demo/
+sarvam-video/
