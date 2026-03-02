@@ -8,7 +8,7 @@
 
 **Setu** is an open protocol that lets AI agents complete purchases on behalf of users — without opening a browser, filling forms, or navigating checkout flows.
 
-The **agent** in Setu is **Indus** — powered by **Sarvam-M**, India's multilingual AI model. Think of it exactly like ChatGPT's shopping feature, but built for India: it speaks Hindi, Tamil, Telugu, Kannada, and 7 other Indian languages, and pays natively via UPI and Hyperswitch instead of Stripe.
+The **agent** in Setu is **Indus** — powered by **Sarvam-M**, India's multilingual AI model. Think of it exactly like ChatGPT's shopping feature, but built for India: it speaks Hindi, Tamil, Telugu, Kannada, and 7 other Indian languages, and pays natively via UPI and Razorpay instead of Stripe.
 
 ```
 User says: "ek white kurta dikhao under 1500 mein"
@@ -18,7 +18,7 @@ Indus (Sarvam AI):
   2. Fetches product feed from merchant
   3. Shows options, user picks one
   4. Collects address & payment info
-  5. Creates payment via Hyperswitch (UPI / card)
+  5. Creates payment via Razorpay (UPI / card)
   6. Completes checkout with merchant
   7. Order confirmed — no browser opened
 ```
@@ -40,18 +40,18 @@ Indus (Sarvam AI):
 │  • Understands 11 Indic languages (Sarvam-M)         │
 │  • Manages checkout session state                    │
 │  • Issues scoped buyer/fulfillment tokens            │
-│  • Orchestrates merchant + Hyperswitch calls         │
+│  • Orchestrates merchant + Razorpay calls            │
 └───────────────┬──────────────────┬───────────────────┘
                 │                  │
    Product Feed │                  │ Get Payment Token
    Checkout     │                  │ (UPI / card / netbanking)
                 ▼                  ▼
        ┌──────────────┐   ┌────────────────────┐
-       │   Merchant   │   │  Hyperswitch (PSP) │
+       │   Merchant   │   │   Razorpay (PSP)   │
        │              │   │                    │
-       │ /checkout_   │   │ POST /payments     │
-       │  sessions    │   │ → payment_id       │
-       │              │   │   + client_secret  │
+       │ /checkout_   │   │ POST /orders       │
+       │  sessions    │   │ → order_id         │
+       │              │   │                    │
        │ Verifies  ───┼──►│ GET /payments/{id} │
        │ payment      │   │                    │
        │              │   └────────────────────┘
@@ -68,7 +68,7 @@ Setu implements the same pattern as ChatGPT's shopping agent — substituting In
 | ChatGPT Shopping | Setu |
 |---|---|
 | ChatGPT (GPT-4) | Indus (Sarvam-M, 11 Indic languages) |
-| Stripe | Hyperswitch (UPI + RuPay + NetBanking + cards) |
+| Stripe | Razorpay (UPI + RuPay + NetBanking + cards) |
 | English only | Hindi, Tamil, Telugu, Kannada + 7 more |
 | USD / EUR | INR (paise), GST-aware |
 
@@ -103,7 +103,7 @@ Merchant: {
     { id: "standard", title: "3–5 days", cost: 0 },
     { id: "express",  title: "1–2 days", cost: 4900 }
   ],
-  payment_handlers: [{ id: "com.hyperswitch.upi", ... }]
+  payment_handlers: [{ id: "com.razorpay.upi_collect", ... }]
 }
 ```
 
@@ -116,23 +116,22 @@ Indus → POST http://merchant.com/checkout_sessions/cs_abc
 Merchant: { status: "ready_for_payment", totals: { total: 158182 } }
 ```
 
-### Step 4 — Agent creates payment via Hyperswitch
+### Step 4 — Agent creates payment via Razorpay
 
 ```
-Indus → POST https://sandbox.hyperswitch.io/payments
+Indus → POST /indus/checkout/cs_abc/payment_intent
 {
   amount: 158182,
   currency: "INR",
   payment_method: "upi",
   payment_method_type: "upi_collect",
-  payment_method_data: { upi: { vpa_id: "raj@upi" } },
-  metadata: { checkout_session_id: "cs_abc" }   ← links payment to session
+  upi_data: { vpa: "raj@upi" }
 }
 
-Hyperswitch: {
+Razorpay: {
   payment_id: "pay_xyz",
-  client_secret: "...",
-  status: "requires_customer_action"   ← user approves in their UPI app
+  razorpay_order_id: "order_abc",
+  status: "pending_customer_action"   ← user approves in their UPI app
 }
 ```
 
@@ -140,13 +139,14 @@ Hyperswitch: {
 
 ```
 Indus → POST http://merchant.com/checkout_sessions/cs_abc/complete
-{ payment_data: { provider: "hyperswitch", token: "pay_xyz" } }
+{ payment_data: { provider: "razorpay", token: "pay_xyz" } }
 
 Merchant internally:
   1. Redeems buyer_token      → Indus  (fetches buyer name/email)
   2. Redeems fulfillment_token → Indus (fetches delivery address)
-  3. Verifies payment status   → Hyperswitch GET /payments/pay_xyz
+  3. Verifies payment status   → Razorpay GET /payments/pay_xyz
   4. Creates order, fires order.created webhook
+  5. Razorpay Route transfer   → merchant UPI VPA settled automatically
 
 Merchant: { order_id: "ord_123", status: "completed" }
 ```
@@ -160,13 +160,14 @@ Merchant: { order_id: "ord_123", status: "completed" }
 UPI payments don't confirm immediately — the user must approve on their phone. Setu handles this automatically:
 
 ```
-Step 4 → Hyperswitch returns status: "requires_customer_action"
+Step 4 → Razorpay returns status: "pending_customer_action"
 Step 5 → Merchant sets session to "awaiting_payment"
 
 [User opens UPI app and approves]
 
-Hyperswitch fires: POST /webhooks/hyperswitch  (on merchant)
+Razorpay fires: POST /webhooks/razorpay  (on merchant)
   → Merchant creates order automatically
+  → Triggers Razorpay Route transfer to merchant VPA
   → Fires order.created webhook
   → Agent sees order_id in next poll
 ```
@@ -178,9 +179,17 @@ Hyperswitch fires: POST /webhooks/hyperswitch  (on merchant)
 ### All three UPI variants
 
 ```jsonc
-{ "payment_method_type": "upi_collect", "vpa_id": "raj@upi" }  // pull from VPA
-{ "payment_method_type": "upi_intent"  }                        // deep-link to app
-{ "payment_method_type": "upi_qr"      }                        // QR code
+{ "payment_method_type": "upi_collect", "upi_data": { "vpa": "raj@upi" } }  // pull from VPA
+{ "payment_method_type": "upi_intent"  }                                      // deep-link to app
+{ "payment_method_type": "upi_qr"      }                                      // QR code
+```
+
+### UPI Reserve Pay (PIN-less agentic payments)
+
+```jsonc
+POST /indus/checkout/{id}/reserve_pay
+{ "vpa": "raj@upi", "max_amount": 500000 }
+// User authorises once → agent debits freely up to max_amount
 ```
 
 ### Indian address validation
@@ -225,8 +234,8 @@ POST /indus/sarvam/product_search
 ```
 indus/         ← Indus — the Sarvam-powered agent runtime (port 8000)
 merchant/      ← Reference merchant service — ACP checkout endpoints (port 8001)
-payments/      ← Hyperswitch proxy in Rust — optional, for scalability (port 9000)
 psp/           ← Delegated payment stub — for vt_* token flows (port 8002)
+payments/      ← DEPRECATED: Hyperswitch Rust proxy (retained for git history)
 
 spec/          ← Protocol definition (OpenAPI + JSON Schema)
 rfc/           ← Design decisions and rationale
@@ -246,8 +255,8 @@ git clone https://github.com/your-org/setu.git && cd setu
 
 # Fill in your API keys
 cp .env.example .env
-# HYPERSWITCH_API_KEY=...   (get from sandbox.hyperswitch.io)
-# SARVAM_API_KEY=...        (get from dashboard.sarvam.ai)
+# RAZORPAY_KEY_ID=rzp_test_...   (get from dashboard.razorpay.com)
+# SARVAM_API_KEY=...             (get from dashboard.sarvam.ai)
 
 # Start all services
 cd deploy && docker compose up --build
@@ -295,7 +304,6 @@ Chat in any Indian language, browse products, pay with UPI or card (Fauxpay test
 |---|---|---|
 | **Indus** | 8000 | Sarvam-powered agent — the brain of the operation |
 | **Merchant** | 8001 | ACP checkout endpoints, product feed, order management |
-| **Payments** (Rust) | 9000 | Hyperswitch proxy — optional, for high-throughput deployments |
 | **PSP stub** | 8002 | Delegated token endpoint — for `vt_*` pre-authorized payment tokens |
 | **Postgres** | 5432 | Persistent store for sessions, payments, tokens, orders |
 
@@ -304,9 +312,12 @@ Chat in any Indian language, browse products, pay with UPI or card (Fauxpay test
 ## Essential env vars
 
 ```bash
-# Hyperswitch (required)
-HYPERSWITCH_API_KEY=your_key
-HYPERSWITCH_BASE_URL=https://sandbox.hyperswitch.io
+# Razorpay (required)
+RAZORPAY_KEY_ID=rzp_test_...
+RAZORPAY_KEY_SECRET=your_secret
+RAZORPAY_WEBHOOK_SECRET=your_webhook_secret
+RAZORPAY_ACCOUNT_ID=acc_...              # platform Route account
+RAZORPAY_MERCHANT_ACCOUNT_ID=acc_...     # merchant linked account for settlement
 
 # Sarvam AI (required for multilingual features)
 SARVAM_API_KEY=your_key
@@ -322,7 +333,6 @@ INDUS_API_KEY=demo_key       # indus → merchant calls
 # Webhooks
 ORDER_WEBHOOK_URL=https://your-endpoint.example.in/webhook
 ORDER_WEBHOOK_SECRET=your_secret
-HYPERSWITCH_WEBHOOK_SECRET=your_hs_secret
 ```
 
 Full reference: `.env.example` and `docs/configuration.md`.
@@ -335,10 +345,9 @@ Full reference: `.env.example` and `docs/configuration.md`.
 |---|---|
 | `docs/protocol-overview.md` | Roles, session state machine, extension points |
 | `docs/india-profile.md` | UPI, GST, PIN codes — full India spec |
-| `docs/hyperswitch.md` | Hyperswitch integration guide |
 | `docs/configuration.md` | Every env var, every service |
 | `rfc/agentic-checkout.md` | Core checkout flow design |
-| `rfc/payment-handlers.md` | `com.hyperswitch.upi` handler binding |
+| `rfc/payment-handlers.md` | `com.razorpay.upi_collect` handler binding |
 | `examples/` | Full request/response walkthroughs |
 
 ---
