@@ -1,6 +1,6 @@
 # PSP Stub — Delegated Payment Endpoint
 
-This is a minimal stub of the ACP delegated payment endpoint. In the Setu protocol the real PSP is **Hyperswitch** — this stub exists for testing the `vt_*` / `dpt_*` pre-authorized token flow without needing a live Hyperswitch account.
+This is a minimal stub of the ACP delegated payment endpoint. In the Setu protocol the real PSP is **Razorpay** — this stub exists for testing the `vt_*` / `dpt_*` pre-authorized token flow without needing a live Razorpay account.
 
 > **Not production-ready.** Does not perform real tokenization or PCI-scoped storage.
 
@@ -23,7 +23,7 @@ Merchant → POST /agentic_commerce/delegate_payment/vt_xyz/redeem
              ← PSP enforces max_amount, one-time use, merchant binding
 ```
 
-In production deployments, replace this stub with real Hyperswitch delegated payment endpoints.
+In production deployments, replace this stub with real Razorpay delegated payment endpoints.
 
 ---
 

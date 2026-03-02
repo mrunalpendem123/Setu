@@ -8,8 +8,12 @@ CREATE TABLE IF NOT EXISTS indus_merchants (
     id VARCHAR PRIMARY KEY,
     name VARCHAR NOT NULL,
     base_url VARCHAR NOT NULL,
+    upi_vpa VARCHAR,
+    razorpay_account_id VARCHAR,
+    settlement_info JSONB,
     product_feed_url VARCHAR,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 \connect psp

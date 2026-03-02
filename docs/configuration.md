@@ -8,20 +8,27 @@ Environment variables for each service in the reference implementation.
 
 | Variable | Default | Description |
 |---|---|---|
-| `DATABASE_URL` | — | SQLAlchemy DB URL (`sqlite:///./indus.db` or `postgresql+psycopg://...`) |
-| `MERCHANT_API_KEYS` | — | Comma-separated keys authorizing merchants to redeem tokens |
+| `DATABASE_URL` | — | SQLAlchemy DB URL (`postgresql+psycopg://...`) |
+| `INDUS_API_KEYS` | — | Comma-separated keys authorizing merchants to redeem tokens |
 | `INDUS_API_KEY` | — | Key sent to merchant for token redemption |
 | `TOKEN_TTL_SECONDS` | `86400` | Buyer / fulfillment token lifetime |
-| `PAYMENTS_SERVICE_URL` | — | URL of Payments proxy (Rust). If unset, calls Hyperswitch directly |
-| `HYPERSWITCH_BASE_URL` | `https://sandbox.hyperswitch.io` | — |
-| `HYPERSWITCH_API_KEY` | — | Hyperswitch secret key |
-| `HYPERSWITCH_PUBLISHABLE_KEY` | — | For session tokens / payment links |
-| `HYPERSWITCH_ADMIN_API_KEY` | — | For API key creation |
-| `HYPERSWITCH_VAULT_API_KEY` | — | For payment method sessions |
-| `SARVAM_BASE_URL` | — | Sarvam AI base URL |
+| `RAZORPAY_KEY_ID` | — | `rzp_test_...` or `rzp_live_...` |
+| `RAZORPAY_KEY_SECRET` | — | Razorpay secret key |
+| `RAZORPAY_WEBHOOK_SECRET` | — | Inbound webhook HMAC-SHA256 secret |
+| `RAZORPAY_ACCOUNT_ID` | — | Platform Route account ID |
+| `RAZORPAY_TIMEOUT_SECONDS` | `20` | — |
+| `RAZORPAY_MAX_RETRIES` | `3` | — |
+| `RAZORPAY_RETRY_BACKOFF_MS` | `200` | — |
+| `SARVAM_BASE_URL` | `https://api.sarvam.ai` | Sarvam AI base URL |
 | `SARVAM_API_KEY` | — | Sarvam API key |
-| `SARVAM_PROXY_PATH` | `/v1/chat/completions` | Path for Sarvam proxy |
+| `SARVAM_API_KEY_HEADER` | `api-subscription-key` | Header name for Sarvam auth |
+| `SARVAM_MODEL` | `sarvam-m` | Model to use |
+| `SARVAM_PROXY_PATH` | `/v1/chat/completions` | Path for raw Sarvam proxy |
+| `SARVAM_TIMEOUT_SECONDS` | `20` | — |
+| `SARVAM_MAX_RETRIES` | `2` | — |
 | `RATE_LIMIT_ENABLED` | `true` | Enable rate limiting |
+| `RATE_LIMIT_REQUESTS` | `60` | Requests per window |
+| `RATE_LIMIT_WINDOW_SECONDS` | `60` | — |
 | `LOG_LEVEL` | `INFO` | — |
 
 ---
@@ -34,9 +41,13 @@ Environment variables for each service in the reference implementation.
 | `INDUS_API_KEYS` | — | Comma-separated keys authorizing Indus |
 | `INDUS_BASE_URL` | — | Indus base URL for token redemption |
 | `INDUS_API_KEY` | — | Key sent when redeeming tokens |
-| `PAYMENTS_SERVICE_URL` | — | Payments proxy URL. Falls back to Hyperswitch directly |
-| `HYPERSWITCH_API_KEY` | — | Hyperswitch secret key (fallback) |
-| `HYPERSWITCH_ACCEPTED_STATUSES` | `succeeded,processing,requires_capture,requires_customer_action` | Payment statuses treated as verified |
+| `RAZORPAY_KEY_ID` | — | Razorpay key ID |
+| `RAZORPAY_KEY_SECRET` | — | Razorpay secret key |
+| `RAZORPAY_WEBHOOK_SECRET` | — | Inbound webhook HMAC-SHA256 secret |
+| `RAZORPAY_MERCHANT_ACCOUNT_ID` | — | Linked account for Route settlement (`acc_...`) |
+| `RAZORPAY_ACCEPTED_STATUSES` | `captured,authorized,requires_customer_action` | Statuses treated as verified |
+| `RAZORPAY_TIMEOUT_SECONDS` | `20` | — |
+| `RAZORPAY_MAX_RETRIES` | `3` | — |
 | `MERCHANT_NAME` | — | Shown in product feed |
 | `MERCHANT_URL` | — | — |
 | `MERCHANT_PRIVACY_URL` | — | — |
@@ -44,20 +55,7 @@ Environment variables for each service in the reference implementation.
 | `ORDER_WEBHOOK_URL` | — | Where to send order events |
 | `ORDER_WEBHOOK_SECRET` | — | HMAC secret for webhook signing |
 | `RATE_LIMIT_ENABLED` | `true` | — |
-
----
-
-## Payments (Rust proxy)
-
-| Variable | Default | Description |
-|---|---|---|
-| `HYPERSWITCH_BASE_URL` | `https://sandbox.hyperswitch.io` | — |
-| `HYPERSWITCH_API_KEY` | — | — |
-| `HYPERSWITCH_PUBLISHABLE_KEY` | — | — |
-| `HYPERSWITCH_ADMIN_API_KEY` | — | — |
-| `HYPERSWITCH_VAULT_API_KEY` | — | — |
-| `HYPERSWITCH_PROFILE_ID` | — | Optional |
-| `PAYMENTS_PORT` | `9000` | — |
+| `LOG_LEVEL` | `INFO` | — |
 
 ---
 

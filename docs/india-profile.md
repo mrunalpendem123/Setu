@@ -4,29 +4,30 @@ This document defines the **India payment handler binding** of the Agentic Comme
 
 It does not change the ACP state model, checkout lifecycle, or order semantics.
 It only specifies what is **required or different** when ACP runs in India — primarily
-replacing **Stripe** as the default payment handler with **Hyperswitch**.
+replacing **Stripe** as the default payment handler with **Razorpay**.
 
 ---
 
 ## 1. Payment Handler
 
-- MUST use **Hyperswitch** as the payment handler.
-- Hyperswitch MUST be configured with at least one UPI connector (PhonePe, Paytm, Razorpay, etc.) and one card connector.
+- MUST use **Razorpay** as the payment handler.
+- Razorpay is the only PSP with live NPCI-endorsed agentic payments, UPI Reserve Pay (PIN-less), and Razorpay Route for direct merchant VPA settlement.
 - The payment handler binding replaces Stripe in base ACP.
 
 ### UPI payment methods
 
-Hyperswitch exposes three UPI flows. The agent picks the right one based on context:
+Razorpay exposes four UPI flows. The agent picks the right one based on context:
 
 | `payment_method_type` | Flow | When to use |
 |---|---|---|
-| `upi_collect` | Agent sends VPA, user approves on their app | Agent knows the user's VPA |
+| `upi_collect` | Agent sends VPA, user approves collect request | Agent knows the user's VPA — primary agentic path |
 | `upi_intent` | Deep-links to user's UPI app | Mobile web / app |
 | `upi_qr` | Display a QR code | Desktop / TV / kiosk |
+| `upi_reserve_pay` | PIN-less SBMD mandate | Recurring / subscription-style agentic payments |
 
-All three return `status: requires_customer_action` immediately.
+UPI Collect returns `status: pending_customer_action` immediately.
 This is **not a failure** — it means the user is approving on their phone.
-The protocol accepts `requires_customer_action` as a valid pending state.
+The protocol accepts `pending_customer_action` as a valid pending state.
 
 ---
 
@@ -47,7 +48,7 @@ All fulfillment addresses MUST conform to Indian postal standards:
 
 - All amounts are in **INR**, expressed in **paise** (smallest unit).
 - `currency` field MUST be `"inr"`.
-- Example: ₹1532.82 = `153282` paise.
+- Example: ₹944.00 = `94400` paise.
 
 ---
 
@@ -61,12 +62,13 @@ Merchants SHOULD attach GST metadata to line items when applicable.
     "gstin": "29ABCDE1234F1Z5",   // buyer GSTIN for B2B invoices (optional)
     "hsn_code": "85183000",        // HSN code for the product
     "tax_label": "GST",
-    "tax_rate_pct": 18.0
+    "tax_rate_pct": 18.0           // 0 / 5 / 12 / 18 / 28
   }
 }
 ```
 
 Standard GST rates in India: 0%, 5%, 12%, 18%, 28%.
+Cotton apparel under ₹1,000 → 5%. Electronics → 18%.
 
 ---
 

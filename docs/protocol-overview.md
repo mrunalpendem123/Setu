@@ -11,9 +11,9 @@ Setu is India's implementation of the Agentic Commerce Protocol (ACP). It substi
 | **Buyer** | The human. Speaks in any of 11 Indic languages. Approves purchases. | — | ChatGPT user |
 | **Agent** | The AI. Understands the buyer's request, manages session state, orchestrates merchant + PSP calls. | `indus/` (Sarvam-M) | ChatGPT |
 | **Merchant** | Implements the 5 ACP checkout endpoints. Stays merchant of record. Never sees raw buyer PII. | `merchant/` | Any online store |
-| **PSP** | Issues scoped one-time payment tokens. Processes the actual charge. | Hyperswitch via `payments/` | Stripe |
+| **PSP** | Issues payment orders, processes UPI/card charges, settles via Route. | Razorpay | Stripe |
 
-The agent (Indus / Sarvam-M) is the single orchestrator. It never opens a browser or fills a form. The merchant never handles raw card data. The PSP (Hyperswitch) never knows about the checkout session — it just issues a token and confirms the charge.
+The agent (Indus / Sarvam-M) is the single orchestrator. It never opens a browser or fills a form. The merchant never handles raw card data. The PSP (Razorpay) never knows about the checkout session — it just creates an order, accepts the charge, and routes settlement to the merchant's UPI VPA.
 
 ---
 
@@ -29,14 +29,15 @@ User: "ek white kurta dikhao under 1500 mein"
     ┌───────────┴────────────┐
     │                        │
     ▼                        ▼
- Merchant               Hyperswitch
- /product_feed          POST /payments
- /checkout_sessions     GET  /payments/{id}
- /checkout_sessions/    (UPI collect / intent / QR /
-   {id}/complete         card / NetBanking)
-    │
+ Merchant               Razorpay
+ /product_feed          POST /v1/orders
+ /checkout_sessions     POST /v1/payments/create/json
+ /checkout_sessions/    GET  /v1/payments/{id}
+   {id}/complete         (UPI collect / intent / QR /
+    │                     card / NetBanking)
     ▼
  order.created webhook → buyer notified
+ Razorpay Route → merchant VPA settled
 ```
 
 ---
@@ -50,16 +51,8 @@ ready_for_payment         ← all required fields present
         ↓  complete with payment token
         │
         ├─ UPI async ──────────────→ awaiting_payment   ← user approves on phone
-        │                                   ↓  Hyperswitch webhook fires
+        │                                   ↓  Razorpay webhook fires
         │                            completed           ← order created (terminal)
-        │
-        ├─ approval_required=true → pending_approval    ← awaiting merchant review
-        │                                   ↓  merchant approves
-        │                            ready_for_payment
-        │
-        ├─ 3DS needed ─────────────→ authentication_required
-        │                                   ↓  re-submit with authentication_result
-        │                            ready_for_payment
         │
         └─────────────────────────→ completed            ← order created (terminal)
 
@@ -68,7 +61,7 @@ session TTL elapsed    → expired   (terminal, surfaced on read)
 ```
 
 **Terminal states**: `completed`, `canceled`, `expired`
-**Blocking states**: `pending_approval`, `authentication_required`, `awaiting_payment`
+**Blocking states**: `awaiting_payment`
 
 ---
 
@@ -108,42 +101,49 @@ Token constraints:
 
 ---
 
-## Payment flow — Hyperswitch
+## Payment flow — Razorpay
 
-Hyperswitch replaces Stripe in the Indus Profile.
+Razorpay replaces Stripe in the Indus Profile.
 
 ```
-1. Indus → Hyperswitch:
-     POST /payments
+1. Indus → Razorpay:
+     POST /v1/orders
      {
-       amount: 158182,          ← paise (₹1,581.82)
+       amount: 94400,           ← paise (₹944.00)
        currency: "INR",
-       payment_method: "upi",
-       payment_method_type: "upi_collect",
-       payment_method_data: { upi: { vpa_id: "raj@upi" } },
-       metadata: { checkout_session_id: "cs_abc" }
+       receipt: "cs_abc",
+       notes: { checkout_session_id: "cs_abc" }
      }
 
-2. Hyperswitch → Indus:
-     { payment_id: "pay_xyz", status: "requires_customer_action" }
+2. Razorpay → Indus:
+     { id: "order_xyz", status: "created" }
 
-3. Indus → Merchant:
+3. Indus → Razorpay (UPI Collect):
+     POST /v1/payments/create/json
+     { amount, currency, order_id, method: "upi", vpa: "raj@upi", ... }
+
+4. Razorpay → Indus:
+     { razorpay_payment_id: "pay_abc", status: "created" }
+     ← user approves collect request on their UPI app
+
+5. Indus → Merchant:
      POST /checkout_sessions/cs_abc/complete
-     { payment_data: { provider: "hyperswitch", token: "pay_xyz" } }
+     { payment_data: { provider: "razorpay", token: "pay_abc" } }
 
-4. Merchant:
+6. Merchant:
      → redeems buyer_token + fulfillment_token from Indus
-     → GET /payments/pay_xyz from Hyperswitch (verify status)
-     → status "requires_customer_action" → set session to awaiting_payment
+     → GET /v1/payments/pay_abc from Razorpay (verify status)
+     → status "created" / "requires_customer_action" → set session to awaiting_payment
 
-5. User approves payment in UPI app
+7. User approves payment in UPI app
 
-6. Hyperswitch fires:
-     POST /webhooks/hyperswitch  (on merchant)
-     { event_type: "payment_succeeded", payment_id: "pay_xyz" }
+8. Razorpay fires:
+     POST /webhooks/razorpay  (on merchant)
+     { event: "payment.captured", payload: { payment: { entity: { id: "pay_abc", ... } } } }
 
-7. Merchant:
+9. Merchant:
      → creates order
+     → triggers Razorpay Route transfer to merchant UPI VPA
      → fires order.created webhook to buyer endpoint
 ```
 
@@ -155,9 +155,10 @@ Hyperswitch replaces Stripe in the Indus Profile.
 
 | Type | Use case |
 |------|----------|
-| `upi_collect` | Pull from VPA — user approves collect request |
+| `upi_collect` | Pull from VPA — user approves collect request (agentic, no redirect) |
 | `upi_intent` | Deep-link to user's UPI app |
 | `upi_qr` | Generate QR code for scanning |
+| `upi_reserve_pay` | PIN-less SBMD mandate — user authorises once, agent debits repeatedly |
 
 ### Indian address validation
 
@@ -185,10 +186,11 @@ Hyperswitch replaces Stripe in the Indus Profile.
 ### Multilingual checkout (Sarvam-M)
 
 ```json
-POST /indus/sarvam/proxy
+POST /indus/sarvam/product_search
 {
   "query": "1000 rupee ke andar headphones chahiye",
-  "language": "hi"
+  "language": "hi",
+  "merchant_base_url": "http://merchant.example.com"
 }
 ```
 
@@ -204,4 +206,4 @@ Supports: Hindi, Tamil, Telugu, Kannada, Bengali, Marathi, Gujarati, Malayalam, 
 | Discounts and coupons | Coupon codes applied during session update | `rfc/discounts.md` |
 | Merchant registry | Indus maintains a discoverable list of ACP merchants | `rfc/merchant-registry.md` |
 | Agent discovery | How merchants find the right agent endpoint | `rfc/agent-discovery.md` |
-| Payment handler binding | `com.hyperswitch.upi` handler specification | `rfc/payment-handlers.md` |
+| Payment handler binding | `com.razorpay.upi_collect` handler specification | `rfc/payment-handlers.md` |
