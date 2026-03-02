@@ -106,6 +106,6 @@ def payments_service_enabled() -> bool:
 
 class PaymentsServiceError(RuntimeError):
     def __init__(self, status_code: int, payload: Dict[str, Any]):
-        super().__init__(f\"Payments service error {status_code}\")
+        super().__init__(f"Payments service error {status_code}")
         self.status_code = status_code
         self.payload = payload

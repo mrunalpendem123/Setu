@@ -44,7 +44,7 @@ from .models import (
     PaymentHandlerDeclaration,
     NegotiatedCapabilities,
 )
-from .payment_verify import verify_hyperswitch_payment
+from .payment_verify import verify_razorpay_payment
 from .delegated_verify import verify_delegated_token
 from .indus_client import IndusClient, IndusClientError
 from .security import validate_request
@@ -112,16 +112,16 @@ _MERCHANT_PAYMENT_METHODS: set = {"card", "upi", "upi_collect", "upi_intent", "u
 
 _MERCHANT_HANDLERS: List[PaymentHandlerDeclaration] = [
     PaymentHandlerDeclaration(
-        id="com.hyperswitch.upi",
+        id="com.razorpay.upi_collect",
         version="2026-02-24",
-        psp="hyperswitch",
+        psp="razorpay",
         requires_delegate_payment=True,
         requires_pci_compliance=False,
-        spec_uri="https://setu.indus.in/spec/2026-02-24/handlers/com.hyperswitch.upi",
+        spec_uri="https://setu.indus.in/spec/2026-02-24/handlers/com.razorpay.upi_collect",
         instrument_schema={
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
-            "description": "UPI payment instrument parameters",
+            "description": "UPI payment instrument parameters (Razorpay)",
             "properties": {
                 "payment_method_type": {
                     "type": "string",
@@ -138,16 +138,32 @@ _MERCHANT_HANDLERS: List[PaymentHandlerDeclaration] = [
         },
     ),
     PaymentHandlerDeclaration(
-        id="com.hyperswitch.card",
+        id="com.razorpay.upi_qr",
         version="2026-02-24",
-        psp="hyperswitch",
+        psp="razorpay",
+        requires_delegate_payment=True,
+        requires_pci_compliance=False,
+        spec_uri="https://setu.indus.in/spec/2026-02-24/handlers/com.razorpay.upi_qr",
+    ),
+    PaymentHandlerDeclaration(
+        id="com.razorpay.upi_intent",
+        version="2026-02-24",
+        psp="razorpay",
+        requires_delegate_payment=True,
+        requires_pci_compliance=False,
+        spec_uri="https://setu.indus.in/spec/2026-02-24/handlers/com.razorpay.upi_intent",
+    ),
+    PaymentHandlerDeclaration(
+        id="com.razorpay.card",
+        version="2026-02-24",
+        psp="razorpay",
         requires_delegate_payment=True,
         requires_pci_compliance=True,
-        spec_uri="https://setu.indus.in/spec/2026-02-24/handlers/com.hyperswitch.card",
+        spec_uri="https://setu.indus.in/spec/2026-02-24/handlers/com.razorpay.card",
         instrument_schema={
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
-            "description": "Card payment instrument parameters",
+            "description": "Card payment instrument parameters (Razorpay)",
             "required": ["card_number", "card_exp_month", "card_exp_year", "card_cvc"],
             "properties": {
                 "card_number": {"type": "string", "description": "PAN — 13 to 19 digits"},
@@ -462,7 +478,7 @@ def _build_links() -> List[Link]:
 
 
 def _payment_provider() -> PaymentProvider:
-    return PaymentProvider(provider="hyperswitch", supported_payment_methods=SUPPORTED_PAYMENT_METHODS)
+    return PaymentProvider(provider="razorpay", supported_payment_methods=SUPPORTED_PAYMENT_METHODS)
 
 
 def _extract_items_from_session(session: Dict[str, Any]) -> List[ItemInput]:
@@ -949,7 +965,7 @@ async def complete_checkout_session(
         payment = payload.payment_data
         payment_currency = session_data.get("currency")
 
-        if payment.provider != "hyperswitch":
+        if payment.provider != "razorpay":
             raise HTTPException(
                 status_code=400,
                 detail={"code": "unsupported_payment_provider", "message": "Unsupported payment provider"},
@@ -960,7 +976,7 @@ async def complete_checkout_session(
             raise HTTPException(status_code=400, detail={"code": "missing_payment_token", "message": "Missing payment token"})
 
         # Delegated payment tokens (vt_...) are redeemed via the PSP; all other
-        # tokens are verified directly against Hyperswitch.
+        # tokens are verified directly against Razorpay.
         is_delegated = token.startswith("vt_")
 
         # pending_approval: merchant must review before charging (B2B / high-value orders)
@@ -987,7 +1003,7 @@ async def complete_checkout_session(
                 currency=payment_currency or "",
             )
         else:
-            verified, reason = verify_hyperswitch_payment(
+            verified, reason = verify_razorpay_payment(
                 payment_id=token,
                 amount=int(total_amount),
                 currency=payment_currency or "",
@@ -1021,7 +1037,7 @@ async def complete_checkout_session(
 
         # UPI / netbanking — payment exists but user hasn't approved yet on device.
         # Capture buyer/fulfillment data now (tokens may expire before webhook fires),
-        # put session into awaiting_payment, and let the Hyperswitch webhook finalise.
+        # put session into awaiting_payment, and let the Razorpay webhook finalise.
         if reason == "pending_customer_action":
             now = datetime.now(timezone.utc)
             # Eagerly redeem tokens so the data is available when the webhook arrives
@@ -1205,57 +1221,93 @@ async def update_order(
     return JSONResponse(content=order_data, status_code=200)
 
 
-@app.post("/webhooks/hyperswitch")
-async def hyperswitch_webhook(request: Request) -> JSONResponse:
+@app.post("/webhooks/razorpay")
+async def razorpay_webhook(request: Request) -> JSONResponse:
     """
-    Receive payment lifecycle events from Hyperswitch.
-    Used to finalise orders for async payment methods (UPI, netbanking)
-    that return requires_customer_action at /complete time.
+    Receive payment lifecycle events from Razorpay.
+    Used to finalise orders for async UPI/netbanking payments and trigger
+    Razorpay Route transfers to merchant UPI VPAs.
 
-    Configure in Hyperswitch dashboard:
-      URL  → https://<merchant-host>/webhooks/hyperswitch
-      Set HYPERSWITCH_WEBHOOK_SECRET env var to the secret shown there.
+    Configure in Razorpay dashboard:
+      URL  → https://<merchant-host>/webhooks/razorpay
+      Set RAZORPAY_WEBHOOK_SECRET env var to the secret shown there.
     """
     body = await request.body()
 
-    # Verify HMAC-SHA512 signature when a secret is configured
-    webhook_secret = os.getenv("HYPERSWITCH_WEBHOOK_SECRET")
+    # Verify HMAC-SHA256 signature when a secret is configured
+    webhook_secret = os.getenv("RAZORPAY_WEBHOOK_SECRET", "")
     if webhook_secret:
-        sig = (
-            request.headers.get("x-webhook-signature-512")
-            or request.headers.get("x-signature")
-        )
+        sig = request.headers.get("X-Razorpay-Signature", "")
         if not sig:
-            raise HTTPException(status_code=401, detail="missing_webhook_signature")
+            raise HTTPException(status_code=400, detail="missing_webhook_signature")
         expected = hmac.new(
-            webhook_secret.encode(), body, hashlib.sha512
+            webhook_secret.encode(), body, hashlib.sha256
         ).hexdigest()
         if not hmac.compare_digest(expected, sig):
-            raise HTTPException(status_code=401, detail="invalid_webhook_signature")
+            raise HTTPException(status_code=400, detail="invalid_webhook_signature")
 
     try:
         event = json.loads(body)
     except Exception:
         raise HTTPException(status_code=400, detail="invalid_json")
 
-    event_type = event.get("event_type", "")
-    payment_obj: Dict[str, Any] = (event.get("content") or {}).get("object") or {}
-    payment_id: str = payment_obj.get("payment_id", "")
-    metadata: Dict[str, Any] = payment_obj.get("metadata") or {}
-    session_id: str = metadata.get("checkout_session_id", "")
+    event_type = event.get("event", "")
+    payment_entity: Dict[str, Any] = (
+        (event.get("payload") or {}).get("payment", {}).get("entity") or {}
+    )
+    payment_id: str = payment_entity.get("id", "")
+    notes: Dict[str, Any] = payment_entity.get("notes") or {}
+    session_id: str = notes.get("checkout_session_id", "")
 
-    logger.info("hyperswitch_webhook event=%s payment_id=%s session_id=%s", event_type, payment_id, session_id)
+    logger.info("razorpay_webhook event=%s payment_id=%s session_id=%s", event_type, payment_id, session_id)
 
     if not session_id:
-        # Cannot correlate — acknowledge and move on
         return JSONResponse(content={"received": True})
 
-    if event_type == "payment_succeeded":
-        _webhook_handle_payment_succeeded(session_id, payment_id, payment_obj)
-    elif event_type in ("payment_failed", "payment_cancelled"):
+    if event_type == "payment.captured":
+        _webhook_handle_payment_succeeded(session_id, payment_id, payment_entity)
+        _trigger_route_transfer(session_id, payment_id, payment_entity.get("amount", 0))
+    elif event_type in ("payment.failed",):
         _webhook_handle_payment_failed(session_id, payment_id, event_type)
 
     return JSONResponse(content={"received": True})
+
+
+def _trigger_route_transfer(session_id: str, payment_id: str, amount: int) -> None:
+    """Transfer captured payment to the merchant's Razorpay Route linked account."""
+    import httpx as _httpx
+
+    key_id = os.getenv("RAZORPAY_KEY_ID", "")
+    key_secret = os.getenv("RAZORPAY_KEY_SECRET", "")
+    razorpay_account_id = os.getenv("RAZORPAY_MERCHANT_ACCOUNT_ID", "")
+
+    if not razorpay_account_id or not key_id or not key_secret:
+        logger.warning("route_transfer skipped: RAZORPAY_KEY_ID / RAZORPAY_MERCHANT_ACCOUNT_ID not set")
+        return
+
+    try:
+        with _httpx.Client(timeout=20) as client:
+            resp = client.post(
+                f"https://api.razorpay.com/v1/payments/{payment_id}/transfers",
+                auth=(key_id, key_secret),
+                json={"transfers": [{"account": razorpay_account_id, "amount": amount, "currency": "INR"}]},
+            )
+        if resp.status_code < 400:
+            transfer_data = resp.json()
+            transfer_id = transfer_data.get("items", [{}])[0].get("id", "")
+            with get_db() as db:
+                log_event(db, "route_transfer_created", session_id, {
+                    "payment_id": payment_id,
+                    "transfer_id": transfer_id,
+                    "amount": amount,
+                    "account_id": razorpay_account_id,
+                })
+                db.commit()
+            logger.info("route_transfer: %s → %s amount=%d", payment_id, razorpay_account_id, amount)
+        else:
+            logger.error("route_transfer failed: %s %s", resp.status_code, resp.text)
+    except Exception as exc:
+        logger.error("route_transfer exception: %s", exc)
 
 
 def _webhook_handle_payment_succeeded(
@@ -1275,7 +1327,10 @@ def _webhook_handle_payment_succeeded(
             return
 
         stored_pid = session_data.get("pending_payment_id")
-        if stored_pid and stored_pid != payment_id:
+        # QR code payments: pending_payment_id is stored as "qr_xxx" (the QR code ID)
+        # but Razorpay fires the webhook with the actual UPI payment ID "pay_xxx".
+        # Any payment captured for this session is valid — skip the strict check.
+        if stored_pid and stored_pid != payment_id and not stored_pid.startswith("qr_"):
             logger.warning(
                 "webhook: payment_id mismatch session=%s stored=%s received=%s",
                 session_id, stored_pid, payment_id,
@@ -1351,7 +1406,7 @@ def _webhook_handle_payment_succeeded(
             "status": "created",
             "total_amount": total_amount,
             "currency": payment_currency,
-            "source": "hyperswitch_webhook",
+            "source": "razorpay_webhook",
         })
         db.commit()
 

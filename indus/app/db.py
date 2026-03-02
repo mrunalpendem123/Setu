@@ -40,6 +40,7 @@ class PaymentRecord(Base):
     __tablename__ = "indus_payments"
 
     payment_id = Column(String, primary_key=True)
+    order_id = Column(String, nullable=True)   # Razorpay order_id that precedes payment
     status = Column(String, nullable=False)
     data = Column(JSONB, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
@@ -63,6 +64,20 @@ class OrderEvent(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     payload = Column(JSONB, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+class IndusmerchantModel(Base):
+    __tablename__ = "indus_merchants"
+
+    id = Column(String, primary_key=True)                        # merch_<uuid>
+    name = Column(String, nullable=False)
+    base_url = Column(String, nullable=False)
+    upi_vpa = Column(String, nullable=True)                      # e.g. shop@okaxis
+    razorpay_account_id = Column(String, nullable=True)          # acc_xxx (Route)
+    settlement_info = Column(JSONB, nullable=True)
+    product_feed_url = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 def init_db() -> None:

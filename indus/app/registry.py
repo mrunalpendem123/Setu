@@ -3,20 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Column, String, DateTime
 from pydantic import BaseModel, ConfigDict
 
-from .db import Base, SessionLocal, engine
-
-
-class MerchantRecord(Base):
-    __tablename__ = "indus_merchants"
-
-    id = Column(String, primary_key=True)
-    name = Column(String, nullable=False)
-    base_url = Column(String, nullable=False)
-    product_feed_url = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+from .db import Base, engine, IndusmerchantModel as MerchantRecord
 
 
 def init_registry() -> None:
@@ -28,6 +17,8 @@ class MerchantRegisterRequest(BaseModel):
 
     name: str
     base_url: str
+    upi_vpa: Optional[str] = None
+    razorpay_account_id: Optional[str] = None
     product_feed_url: Optional[str] = None
 
 
@@ -37,5 +28,7 @@ class MerchantResponse(BaseModel):
     id: str
     name: str
     base_url: str
+    upi_vpa: Optional[str] = None
+    razorpay_account_id: Optional[str] = None
     product_feed_url: Optional[str] = None
     created_at: datetime

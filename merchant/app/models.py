@@ -77,9 +77,9 @@ class PaymentHandlerDeclaration(BaseModel):
     """A payment handler declared by the agent or supported by the merchant."""
     model_config = ConfigDict(extra="allow")
 
-    id: str                             # reverse-DNS: "com.hyperswitch.upi"
+    id: str                             # reverse-DNS: "com.razorpay.upi_collect"
     version: str                        # "2026-02-24"
-    psp: str                            # "hyperswitch"
+    psp: str                            # "razorpay"
     requires_delegate_payment: bool = True
     requires_pci_compliance: bool = False
     spec_uri: Optional[str] = None      # URI to the handler's machine-readable spec
@@ -130,7 +130,7 @@ class CheckoutSessionUpdateRequest(BaseModel):
 class PaymentData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["hyperswitch"]
+    provider: Literal["razorpay"]
     token: str
     billing_address: Optional[Address] = None
     approval_required: bool = False
@@ -345,7 +345,7 @@ SupportedPaymentMethod = Literal["card", "upi"]
 class PaymentProvider(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["hyperswitch"]
+    provider: Literal["razorpay"]
     supported_payment_methods: List[SupportedPaymentMethod]
 
 

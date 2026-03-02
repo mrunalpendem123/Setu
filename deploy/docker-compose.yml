@@ -27,22 +27,21 @@ services:
       INDUS_API_KEYS: demo_key
       INDUS_BASE_URL: http://indus:8000
       INDUS_API_KEY: demo_key
-      PAYMENTS_SERVICE_URL: http://payments:9000
       MERCHANT_NAME: "Demo Merchant"
       MERCHANT_URL: "https://merchant.example.com"
       MERCHANT_PRIVACY_URL: "https://merchant.example.com/privacy"
       MERCHANT_TOS_URL: "https://merchant.example.com/terms"
       MERCHANT_SUPPORT_URL: "https://merchant.example.com/support"
       MERCHANT_BRAND: "Demo Brand"
-      HYPERSWITCH_API_KEY: ${HYPERSWITCH_API_KEY:-}
-      HYPERSWITCH_BASE_URL: ${HYPERSWITCH_BASE_URL:-https://sandbox.hyperswitch.io}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
+      RAZORPAY_MERCHANT_ACCOUNT_ID: ${RAZORPAY_MERCHANT_ACCOUNT_ID:-}
     ports:
       - "8001:8001"
     depends_on:
       postgres:
         condition: service_healthy
-      payments:
-        condition: service_started
 
   indus:
     build: ./indus
@@ -52,12 +51,10 @@ services:
       INDUS_API_KEY: demo_key
       MERCHANT_API_KEYS: demo_key
       TOKEN_TTL_SECONDS: 86400
-      PAYMENTS_SERVICE_URL: http://payments:9000
-      HYPERSWITCH_API_KEY: ${HYPERSWITCH_API_KEY:-}
-      HYPERSWITCH_PUBLISHABLE_KEY: ${HYPERSWITCH_PUBLISHABLE_KEY:-}
-      HYPERSWITCH_ADMIN_API_KEY: ${HYPERSWITCH_ADMIN_API_KEY:-}
-      HYPERSWITCH_VAULT_API_KEY: ${HYPERSWITCH_VAULT_API_KEY:-}
-      HYPERSWITCH_BASE_URL: ${HYPERSWITCH_BASE_URL:-https://sandbox.hyperswitch.io}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
+      RAZORPAY_ACCOUNT_ID: ${RAZORPAY_ACCOUNT_ID:-}
       SARVAM_API_KEY: ${SARVAM_API_KEY:-}
       SARVAM_BASE_URL: ${SARVAM_BASE_URL:-https://api.sarvam.ai}
       SARVAM_PROXY_PATH: ${SARVAM_PROXY_PATH:-/v1/chat/completions}
@@ -68,22 +65,6 @@ services:
         condition: service_healthy
       merchant:
         condition: service_started
-
-  payments:
-    build: ./payments
-    container_name: indus-payments
-    environment:
-      HYPERSWITCH_API_KEY: ${HYPERSWITCH_API_KEY}
-      HYPERSWITCH_PUBLISHABLE_KEY: ${HYPERSWITCH_PUBLISHABLE_KEY}
-      HYPERSWITCH_ADMIN_API_KEY: ${HYPERSWITCH_ADMIN_API_KEY}
-      HYPERSWITCH_VAULT_API_KEY: ${HYPERSWITCH_VAULT_API_KEY}
-      HYPERSWITCH_PROFILE_ID: ${HYPERSWITCH_PROFILE_ID}
-      HYPERSWITCH_BASE_URL: ${HYPERSWITCH_BASE_URL:-https://sandbox.hyperswitch.io}
-    ports:
-      - "9000:9000"
-    depends_on:
-      postgres:
-        condition: service_healthy
 
   psp:
     build: ./psp

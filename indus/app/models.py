@@ -63,9 +63,9 @@ class PaymentHandlerDeclaration(BaseModel):
     """A payment handler the agent declares it can use."""
     model_config = ConfigDict(extra="allow")
 
-    id: str                              # reverse-DNS: "com.hyperswitch.upi"
+    id: str                              # reverse-DNS: "com.razorpay.upi_collect"
     version: str                         # "2026-02-24"
-    psp: str                             # "hyperswitch"
+    psp: str                             # "razorpay"
     requires_delegate_payment: bool = True
     requires_pci_compliance: bool = False
     spec_uri: Optional[str] = None       # URI to the handler's machine-readable spec
@@ -134,14 +134,27 @@ class PaymentIntentResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     payment_id: str
-    client_secret: str
+    client_secret: Optional[str] = None
     status: str
+    razorpay_order_id: Optional[str] = None
+    qr_image_url: Optional[str] = None
+    upi_deep_link: Optional[str] = None
+
+
+class UPIReservePayRequest(BaseModel):
+    """UPI Reserve Pay (PIN-less agentic mandate) request."""
+    model_config = ConfigDict(extra="forbid")
+
+    vpa: str
+    max_amount: int                          # paise
+    customer_id: Optional[str] = None
+    description: str = "Indus Agent Authorization"
 
 
 class PaymentData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["hyperswitch"]
+    provider: Literal["razorpay"]
     token: str
     billing_address: Optional[Address] = None
 

@@ -2,7 +2,7 @@
 
 This is the reference merchant implementation for the Setu protocol. It exposes the five ACP checkout endpoints that **Indus (the agent)** calls to browse products, create checkout sessions, and confirm orders.
 
-The merchant never handles raw buyer PII. Instead it receives encrypted `buyer_token` and `fulfillment_token` values issued by Indus, redeems them at order time to retrieve the buyer's name / address, then verifies payment directly with Hyperswitch.
+The merchant never handles raw buyer PII. Instead it receives encrypted `buyer_token` and `fulfillment_token` values issued by Indus, redeems them at order time to retrieve the buyer's name / address, then verifies payment directly with Razorpay.
 
 ```
 Indus (agent)
@@ -15,8 +15,9 @@ Indus (agent)
     └── on complete:
           merchant → POST /indus/tokens/{btok}/redeem   ← fetches buyer name/email
           merchant → POST /indus/tokens/{ftok}/redeem   ← fetches delivery address
-          merchant → GET  /payments/{id}  (Hyperswitch) ← verifies payment
+          merchant → GET  /payments/{id}  (Razorpay)   ← verifies payment
           merchant → creates order → fires order.created webhook
+          merchant → Razorpay Route transfer to merchant linked account
 ```
 
 ---
@@ -32,7 +33,7 @@ Indus (agent)
 | `POST` | `/checkout_sessions/{id}/complete` | Pay and create order |
 | `POST` | `/checkout_sessions/{id}/cancel` | Cancel session |
 | `POST` | `/orders/{id}/update` | Update order status (requires `X-Indus-Key`) |
-| `POST` | `/webhooks/hyperswitch` | Receive Hyperswitch payment events (UPI async) |
+| `POST` | `/webhooks/razorpay` | Receive Razorpay payment events (UPI async, Route transfer) |
 | `GET`  | `/health` | Health check |
 
 ---
@@ -47,8 +48,8 @@ ready_for_payment
         │
         ├─ UPI async (requires_customer_action)
         │        ↓
-        │   awaiting_payment  ←── Hyperswitch fires POST /webhooks/hyperswitch
-        │        ↓  payment.succeeded
+        │   awaiting_payment  ←── Razorpay fires POST /webhooks/razorpay
+        │        ↓  payment.captured
         └─────── completed   ← order created, webhook fired
 
 any non-terminal → canceled  (terminal)
@@ -86,29 +87,18 @@ Idempotency: all `POST` requests accept an optional `Idempotency-Key` header.
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` | |
 | `IDEMPOTENCY_TTL_SECONDS` | `86400` | |
 
-### Hyperswitch (direct mode)
+### Razorpay
 
-Used when `PAYMENTS_SERVICE_URL` is **not** set.
-
-| Var | Default |
-|-----|---------|
-| `HYPERSWITCH_BASE_URL` | `https://sandbox.hyperswitch.io` |
-| `HYPERSWITCH_API_KEY` | — |
-| `HYPERSWITCH_API_KEY_HEADER` | `api-key` |
-| `HYPERSWITCH_MERCHANT_ID` | optional |
-| `HYPERSWITCH_PROFILE_ID` | optional |
-| `HYPERSWITCH_ACCEPTED_STATUSES` | `succeeded,processing,requires_capture,requires_customer_action` |
-| `HYPERSWITCH_WEBHOOK_SECRET` | — | HMAC-SHA512 secret for inbound Hyperswitch webhooks |
-| `HYPERSWITCH_TIMEOUT_SECONDS` | `20` |
-| `HYPERSWITCH_MAX_RETRIES` | `3` |
-| `HYPERSWITCH_RETRY_BACKOFF_MS` | `200` |
-
-### Rust payments proxy (optional)
-
-| Var | Notes |
-|-----|-------|
-| `PAYMENTS_SERVICE_URL` | If set, Hyperswitch calls go through the Rust proxy at port 9000 |
-| `PAYMENTS_SERVICE_TIMEOUT_SECONDS` | `20` |
+| Var | Default | Notes |
+|-----|---------|-------|
+| `RAZORPAY_KEY_ID` | — | `rzp_test_...` or `rzp_live_...` |
+| `RAZORPAY_KEY_SECRET` | — | Razorpay secret key |
+| `RAZORPAY_WEBHOOK_SECRET` | — | HMAC-SHA256 secret for inbound webhook verification |
+| `RAZORPAY_MERCHANT_ACCOUNT_ID` | — | Route: merchant linked account ID (`acc_...`) for settlement |
+| `RAZORPAY_ACCEPTED_STATUSES` | `captured,authorized,requires_customer_action` | |
+| `RAZORPAY_TIMEOUT_SECONDS` | `20` | |
+| `RAZORPAY_MAX_RETRIES` | `3` | |
+| `RAZORPAY_RETRY_BACKOFF_MS` | `200` | |
 
 ### Product feed
 
@@ -161,16 +151,11 @@ export DATABASE_URL="postgresql+psycopg://user:pass@localhost:5432/indus"
 export INDUS_API_KEYS=demo_key
 export INDUS_BASE_URL="http://localhost:8000"
 export INDUS_API_KEY=demo_key
-export HYPERSWITCH_API_KEY=your_key
-export HYPERSWITCH_WEBHOOK_SECRET=your_hs_webhook_secret
+export RAZORPAY_KEY_ID=rzp_test_...
+export RAZORPAY_KEY_SECRET=your_secret
+export RAZORPAY_WEBHOOK_SECRET=your_webhook_secret
 
 uvicorn app.main:app --reload --port 8001
-```
-
-To use the Rust payments proxy:
-
-```bash
-export PAYMENTS_SERVICE_URL="http://localhost:9000"
 ```
 
 ---

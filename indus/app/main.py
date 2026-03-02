@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import os
 import logging
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from uuid import uuid4
 
 import base64
@@ -21,6 +21,7 @@ from .models import (
     IndusCheckoutResponse,
     PaymentIntentRequest,
     PaymentIntentResponse,
+    UPIReservePayRequest,
     CompleteCheckoutRequest,
     CompleteCheckoutResponse,
     TokenRedeemRequest,
@@ -29,11 +30,10 @@ from .models import (
     PaymentHandlerDeclaration,
 )
 from .merchant_client import MerchantClient
-from .hyperswitch import HyperswitchClient, HyperswitchAPIError
+from .razorpay_client import RazorpayClient, RazorpayAPIError
 from .sarvam_client import SarvamClient, SarvamAPIError
 from .rate_limit import RateLimiter
-from .payments_client import PaymentsServiceClient, PaymentsServiceError, payments_service_enabled
-from .db import init_db, get_db, SessionRecord, PaymentRecord, OrderEvent, TokenRecord
+from .db import init_db, get_db, SessionRecord, PaymentRecord, OrderEvent, TokenRecord, IndusmerchantModel
 from .security import validate_merchant_request
 from .capabilities import get_indus_capabilities
 from .registry import MerchantRecord, MerchantRegisterRequest, MerchantResponse, init_registry
@@ -91,15 +91,11 @@ async def rate_limit_middleware(request: Request, call_next):
     return response
 
 
-def _raise_hyperswitch_error(exc: HyperswitchAPIError) -> None:
+def _raise_razorpay_error(exc: RazorpayAPIError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.payload)
 
 
 def _raise_sarvam_error(exc: SarvamAPIError) -> None:
-    raise HTTPException(status_code=exc.status_code, detail=exc.payload)
-
-
-def _raise_payments_error(exc: PaymentsServiceError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.payload)
 
 
@@ -126,16 +122,16 @@ def _default_indus_capabilities() -> AgentCapabilities:
         payment_methods=["card", "upi_collect", "upi_intent", "upi_qr", "netbanking"],
         payment_handlers=[
             PaymentHandlerDeclaration(
-                id="com.hyperswitch.upi",
+                id="com.razorpay.upi_collect",
                 version="2026-02-24",
-                psp="hyperswitch",
+                psp="razorpay",
                 requires_delegate_payment=True,
                 requires_pci_compliance=False,
-                spec_uri="https://setu.indus.in/spec/2026-02-24/handlers/com.hyperswitch.upi",
+                spec_uri="https://setu.indus.in/spec/2026-02-24/handlers/com.razorpay.upi_collect",
                 instrument_schema={
                     "$schema": "https://json-schema.org/draft/2020-12/schema",
                     "type": "object",
-                    "description": "UPI payment instrument parameters",
+                    "description": "UPI Collect payment instrument parameters (Razorpay)",
                     "properties": {
                         "payment_method_type": {
                             "type": "string",
@@ -151,16 +147,16 @@ def _default_indus_capabilities() -> AgentCapabilities:
                 },
             ),
             PaymentHandlerDeclaration(
-                id="com.hyperswitch.card",
+                id="com.razorpay.card",
                 version="2026-02-24",
-                psp="hyperswitch",
+                psp="razorpay",
                 requires_delegate_payment=True,
                 requires_pci_compliance=True,
-                spec_uri="https://setu.indus.in/spec/2026-02-24/handlers/com.hyperswitch.card",
+                spec_uri="https://setu.indus.in/spec/2026-02-24/handlers/com.razorpay.card",
                 instrument_schema={
                     "$schema": "https://json-schema.org/draft/2020-12/schema",
                     "type": "object",
-                    "description": "Card payment instrument parameters",
+                    "description": "Card payment instrument parameters (Razorpay)",
                     "required": ["card_number", "card_exp_month", "card_exp_year", "card_cvc"],
                     "properties": {
                         "card_number":      {"type": "string"},
@@ -173,7 +169,7 @@ def _default_indus_capabilities() -> AgentCapabilities:
                 },
             ),
         ],
-        extensions=["india_gst", "upi_vpa", "discounts"],
+        extensions=["india_gst", "upi_vpa", "upi_reserve_pay", "discounts"],
         locale="en-IN",
         timezone="Asia/Kolkata",
     )
@@ -363,45 +359,152 @@ def create_payment_intent(
         if not record:
             raise HTTPException(status_code=404, detail="unknown_session")
 
-    request_data = payload.model_dump(exclude_none=True)
-    metadata = dict(request_data.get("metadata") or {})
-    metadata.setdefault("checkout_session_id", session_id)
-    request_data["metadata"] = metadata
+    rzp = RazorpayClient()
+    notes: Dict[str, Any] = {"checkout_session_id": session_id}
+    if payload.metadata:
+        notes.update(payload.metadata)
 
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            record_data = client.create_payment(request_data)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    else:
-        client = HyperswitchClient()
-        try:
-            record_data = client.create_payment_intent(request_data)
-        except HyperswitchAPIError as exc:
-            _raise_hyperswitch_error(exc)
+    try:
+        order = rzp.create_order(
+            amount=payload.amount,
+            currency=payload.currency.upper(),
+            receipt=session_id,
+            notes=notes,
+        )
+    except RazorpayAPIError as exc:
+        _raise_razorpay_error(exc)
 
-    payment_id = record_data.get("payment_id") or record_data.get("id")
-    if not payment_id:
-        raise HTTPException(status_code=502, detail="hyperswitch_missing_payment_id")
+    order_id: str = order["id"]
+    payment_method_type = payload.payment_method_type or "upi_collect"
+    payment_id: str = ""
+    qr_image_url: Optional[str] = None
+    upi_deep_link: Optional[str] = None
+    status: str = "created"
 
+    try:
+        if payment_method_type == "upi_collect":
+            upi = payload.upi_data
+            if not upi or not upi.vpa:
+                raise HTTPException(status_code=400, detail="vpa required for upi_collect")
+            customer = payload.customer or {}
+            result = rzp.create_upi_payment(
+                order_id=order_id,
+                vpa=upi.vpa,
+                contact=customer.get("phone", ""),
+                email=customer.get("email", ""),
+                amount=payload.amount,
+                currency=payload.currency.upper(),
+            )
+            payment_id = result.get("razorpay_payment_id") or result.get("payment_id", order_id)
+            status = "pending_customer_action"
+
+        elif payment_method_type == "upi_qr":
+            import time as _time
+            close_by = int(_time.time()) + 900  # 15 min
+            result = rzp.create_qr_code(
+                name=notes.get("merchant_name", "Indus Merchant"),
+                description=f"Order {session_id}",
+                amount=payload.amount,
+                close_by_unix=close_by,
+                notes={"checkout_session_id": session_id},
+            )
+            payment_id = result.get("id", order_id)
+            qr_image_url = result.get("image_url")
+            status = "pending_customer_action"
+
+        else:
+            # upi_intent — deep link built from order_id + merchant UPI VPA
+            payment_id = order_id
+            merchant_vpa = ""
+            with get_db() as db:
+                merch = (
+                    db.query(IndusmerchantModel)
+                    .filter(IndusmerchantModel.base_url == record.merchant_base_url)
+                    .first()
+                )
+                if merch and merch.upi_vpa:
+                    merchant_vpa = merch.upi_vpa
+            if not merchant_vpa:
+                raise HTTPException(
+                    status_code=400,
+                    detail="merchant_upi_vpa_not_configured: register the merchant with a upi_vpa to use upi_intent",
+                )
+            upi_deep_link = (
+                f"upi://pay?pa={merchant_vpa}"
+                f"&am={payload.amount / 100:.2f}"
+                f"&tr={order_id}"
+                f"&tn=IndusPayment"
+                f"&cu=INR"
+            )
+            status = "created"
+
+    except RazorpayAPIError as exc:
+        _raise_razorpay_error(exc)
+
+    now = datetime.now(timezone.utc)
     with get_db() as db:
         db.merge(
             PaymentRecord(
                 payment_id=payment_id,
-                status=record_data.get("status", "unknown"),
-                data=record_data,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                order_id=order_id,
+                status=status,
+                data={
+                    "order": order,
+                    "payment_method_type": payment_method_type,
+                    "metadata": notes,
+                },
+                created_at=now,
+                updated_at=now,
             )
         )
         db.commit()
 
     return PaymentIntentResponse(
         payment_id=payment_id,
-        client_secret=record_data.get("client_secret", ""),
-        status=record_data.get("status", "unknown"),
+        status=status,
+        razorpay_order_id=order_id,
+        qr_image_url=qr_image_url,
+        upi_deep_link=upi_deep_link,
     )
+
+
+@app.post("/indus/checkout/{session_id}/reserve_pay")
+def create_reserve_pay(
+    session_id: str,
+    payload: UPIReservePayRequest,
+) -> Dict[str, Any]:
+    """UPI Reserve Pay (SBMD / PIN-less agentic mandate) — user authorises once,
+    agent can debit freely up to max_amount thereafter."""
+    with get_db() as db:
+        record = db.get(SessionRecord, session_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="unknown_session")
+
+    rzp = RazorpayClient()
+    try:
+        order = rzp.create_order(
+            amount=payload.max_amount,
+            currency="INR",
+            receipt=f"{session_id}_rp",
+            notes={"checkout_session_id": session_id, "type": "reserve_pay"},
+        )
+        mandate = rzp.create_upi_mandate(
+            order_id=order["id"],
+            customer_id=payload.customer_id or "",
+            vpa=payload.vpa,
+            max_amount=payload.max_amount,
+            description=payload.description,
+        )
+    except RazorpayAPIError as exc:
+        _raise_razorpay_error(exc)
+
+    return {
+        "mandate_payment_id": mandate.get("id"),
+        "razorpay_order_id": order["id"],
+        "status": mandate.get("status", "created"),
+        "vpa": payload.vpa,
+        "max_amount": payload.max_amount,
+    }
 
 
 @app.post("/indus/checkout/{session_id}/complete", response_model=CompleteCheckoutResponse)
@@ -435,20 +538,16 @@ def refund_checkout(
     payload: Dict[str, Any] = Body(default={}),
 ) -> Dict[str, Any]:
     """
-    Refund a completed checkout session.
-    Looks up the payment_id from the IndusPayment record for this session,
-    then calls Hyperswitch POST /refunds.
+    Refund a completed checkout session via Razorpay.
 
     Body (all optional):
       amount   – paise; omit for full refund
-      reason   – customer_initiated | duplicate | fraudulent
-      metadata – pass-through metadata
+      notes    – pass-through metadata
     """
     with get_db() as db:
         record = db.get(SessionRecord, session_id)
         if not record:
             raise HTTPException(status_code=404, detail="unknown_session")
-        # Find the most recent payment for this session via metadata
         payment_record = (
             db.query(PaymentRecord)
             .filter(PaymentRecord.data["metadata"]["checkout_session_id"].as_string() == session_id)
@@ -458,37 +557,32 @@ def refund_checkout(
     if not payment_record:
         raise HTTPException(status_code=404, detail="no_payment_found_for_session")
 
-    refund_payload = {**payload, "payment_id": payment_record.payment_id}
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.create_refund(payment_record.payment_id, refund_payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    hs = HyperswitchClient()
+    rzp = RazorpayClient()
     try:
-        return hs.create_refund(payment_record.payment_id, refund_payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
+        return rzp.refund_payment(
+            payment_id=payment_record.payment_id,
+            amount=payload.get("amount"),
+            notes=payload.get("notes"),
+        )
+    except RazorpayAPIError as exc:
+        _raise_razorpay_error(exc)
 
 
 @app.post("/indus/payments/{payment_id}/refunds")
-def hyperswitch_create_refund(
+def razorpay_create_refund(
     payment_id: str,
     payload: Dict[str, Any] = Body(default={}),
 ) -> Dict[str, Any]:
-    """Direct Hyperswitch refund passthrough (when caller already has payment_id)."""
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.create_refund(payment_id, payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    hs = HyperswitchClient()
+    """Direct Razorpay refund (when caller already has payment_id)."""
+    rzp = RazorpayClient()
     try:
-        return hs.create_refund(payment_id, payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
+        return rzp.refund_payment(
+            payment_id=payment_id,
+            amount=payload.get("amount"),
+            notes=payload.get("notes"),
+        )
+    except RazorpayAPIError as exc:
+        _raise_razorpay_error(exc)
 
 
 @app.post("/indus/tokens/{token}/redeem", response_model=TokenRedeemResponse)
@@ -513,364 +607,49 @@ def redeem_token(
         )
 
 
-@app.post("/indus/payments")
-def hyperswitch_create_payment(payload: Dict[str, Any]) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.create_payment(payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.create_payment(payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.post("/indus/payments/{payment_id}")
-def hyperswitch_update_payment(
-    payment_id: str,
-    payload: Dict[str, Any] = Body(default={}),
-) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.update_payment(payment_id, payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.update_payment(payment_id, payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.post("/indus/payments/{payment_id}/confirm")
-def hyperswitch_confirm_payment(
-    payment_id: str,
-    payload: Dict[str, Any] = Body(default={}),
-) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.confirm_payment(payment_id, payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.confirm_payment(payment_id, payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.post("/indus/payments/{payment_id}/confirm_intent")
-def hyperswitch_confirm_intent(
-    payment_id: str,
-    payload: Dict[str, Any] = Body(default={}),
-) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.confirm_intent(payment_id, payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.confirm_intent(payment_id, payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
 @app.get("/indus/payments/{payment_id}")
-def hyperswitch_retrieve_payment(
-    payment_id: str,
-    request: Request,
-) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.retrieve_payment(payment_id, params=dict(request.query_params))
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
+def razorpay_retrieve_payment(payment_id: str) -> Dict[str, Any]:
+    """Retrieve a Razorpay payment by ID."""
+    rzp = RazorpayClient()
     try:
-        return client.retrieve_payment(payment_id, params=dict(request.query_params))
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.get("/indus/payments/{payment_id}/payment_methods")
-def hyperswitch_payment_methods(
-    payment_id: str,
-    request: Request,
-) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.payment_methods(payment_id, params=dict(request.query_params))
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.payment_methods(payment_id, params=dict(request.query_params))
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.post("/indus/payments/{payment_id}/cancel")
-def hyperswitch_cancel_payment(
-    payment_id: str,
-    payload: Dict[str, Any] = Body(default={}),
-) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.cancel_payment(payment_id, payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.cancel_payment(payment_id, payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.post("/indus/payments/{payment_id}/cancel_post_capture")
-def hyperswitch_cancel_post_capture(
-    payment_id: str,
-    payload: Dict[str, Any] = Body(default={}),
-) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.cancel_post_capture(payment_id, payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.cancel_payment_post_capture(payment_id, payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
+        return rzp.retrieve_payment(payment_id)
+    except RazorpayAPIError as exc:
+        _raise_razorpay_error(exc)
 
 
 @app.post("/indus/payments/{payment_id}/capture")
-def hyperswitch_capture_payment(
+def razorpay_capture_payment(
     payment_id: str,
     payload: Dict[str, Any] = Body(default={}),
 ) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.capture_payment(payment_id, payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
+    """Capture an authorised Razorpay payment."""
+    rzp = RazorpayClient()
     try:
-        return client.capture_payment(payment_id, payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
+        return rzp.capture_payment(
+            payment_id=payment_id,
+            amount=payload.get("amount", 0),
+            currency=payload.get("currency", "INR"),
+        )
+    except RazorpayAPIError as exc:
+        _raise_razorpay_error(exc)
 
 
-@app.post("/indus/payments/{payment_id}/incremental_authorization")
-def hyperswitch_incremental_authorization(
+@app.post("/indus/payments/{payment_id}/transfers")
+def razorpay_create_transfer(
     payment_id: str,
     payload: Dict[str, Any] = Body(default={}),
 ) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.incremental_authorization(payment_id, payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
+    """Razorpay Route — split captured payment to a merchant linked account."""
+    rzp = RazorpayClient()
     try:
-        return client.incremental_authorization(payment_id, payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.post("/indus/payments/{payment_id}/extend_authorization")
-def hyperswitch_extend_authorization(payment_id: str) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.extend_authorization(payment_id)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.extend_authorization(payment_id)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.post("/indus/payments/session_tokens")
-def hyperswitch_session_tokens(payload: Dict[str, Any]) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.session_tokens(payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.create_session_token(payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.get("/indus/payment_links/{payment_link_id}")
-def hyperswitch_payment_link_retrieve(payment_link_id: str) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.payment_link(payment_link_id)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.retrieve_payment_link(payment_link_id)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.get("/indus/payments")
-def hyperswitch_list_payments(request: Request) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.list_payments(params=dict(request.query_params))
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.list_payments(params=dict(request.query_params))
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.post("/indus/payments/{payment_id}/3ds/authentication")
-def hyperswitch_external_3ds(
-    payment_id: str,
-    payload: Dict[str, Any] = Body(default={}),
-) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.external_3ds(payment_id, payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.external_3ds_authentication(payment_id, payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.post("/indus/payments/{payment_id}/complete_authorize")
-def hyperswitch_complete_authorize(
-    payment_id: str,
-    payload: Dict[str, Any] = Body(default={}),
-) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.complete_authorize(payment_id, payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.complete_authorize(payment_id, payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.post("/indus/payments/{payment_id}/create_external_sdk_tokens")
-def hyperswitch_create_external_sdk_tokens(
-    payment_id: str,
-    payload: Dict[str, Any] = Body(default={}),
-) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.create_external_sdk_tokens(payment_id, payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.create_external_sdk_tokens(payment_id, payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.post("/indus/payments/{payment_id}/update_metadata")
-def hyperswitch_update_metadata(
-    payment_id: str,
-    payload: Dict[str, Any] = Body(default={}),
-) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.update_metadata(payment_id, payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.update_metadata(payment_id, payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.post("/indus/payments/{payment_id}/eligibility")
-def hyperswitch_submit_eligibility(
-    payment_id: str,
-    payload: Dict[str, Any] = Body(default={}),
-) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.submit_eligibility(payment_id, payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.submit_eligibility(payment_id, payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.post("/indus/payment_method_sessions")
-def hyperswitch_payment_method_session(payload: Dict[str, Any]) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.payment_method_sessions(payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.create_payment_method_session(payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
-
-
-@app.post("/indus/api_keys/{merchant_id}")
-def hyperswitch_create_api_key(
-    merchant_id: str,
-    payload: Dict[str, Any] = Body(default={}),
-) -> Dict[str, Any]:
-    if payments_service_enabled():
-        client = PaymentsServiceClient()
-        try:
-            return client.create_api_key(merchant_id, payload)
-        except PaymentsServiceError as exc:
-            _raise_payments_error(exc)
-    client = HyperswitchClient()
-    try:
-        return client.create_api_key(merchant_id, payload)
-    except HyperswitchAPIError as exc:
-        _raise_hyperswitch_error(exc)
+        return rzp.create_transfer(
+            payment_id=payment_id,
+            account_id=payload["account_id"],
+            amount=payload["amount"],
+            currency=payload.get("currency", "INR"),
+        )
+    except RazorpayAPIError as exc:
+        _raise_razorpay_error(exc)
 
 
 @app.post("/indus/sarvam/proxy")
@@ -897,14 +676,17 @@ def indus_capabilities() -> dict:
 
 @app.post("/indus/merchants")
 def register_merchant(payload: MerchantRegisterRequest) -> MerchantResponse:
-    merchant_id = f"m_{uuid4().hex}"
+    merchant_id = f"merch_{uuid4().hex}"
     now = datetime.now(timezone.utc)
     record = MerchantRecord(
         id=merchant_id,
         name=payload.name,
         base_url=payload.base_url,
+        upi_vpa=payload.upi_vpa,
+        razorpay_account_id=payload.razorpay_account_id,
         product_feed_url=payload.product_feed_url,
         created_at=now,
+        updated_at=now,
     )
     with get_db() as db:
         db.add(record)
@@ -913,6 +695,8 @@ def register_merchant(payload: MerchantRegisterRequest) -> MerchantResponse:
         id=merchant_id,
         name=payload.name,
         base_url=payload.base_url,
+        upi_vpa=payload.upi_vpa,
+        razorpay_account_id=payload.razorpay_account_id,
         product_feed_url=payload.product_feed_url,
         created_at=now,
     )
@@ -927,6 +711,8 @@ def list_merchants() -> list:
                 "id": r.id,
                 "name": r.name,
                 "base_url": r.base_url,
+                "upi_vpa": r.upi_vpa,
+                "razorpay_account_id": r.razorpay_account_id,
                 "product_feed_url": r.product_feed_url,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
             }
@@ -944,6 +730,8 @@ def get_merchant(merchant_id: str) -> dict:
             "id": record.id,
             "name": record.name,
             "base_url": record.base_url,
+            "upi_vpa": record.upi_vpa,
+            "razorpay_account_id": record.razorpay_account_id,
             "product_feed_url": record.product_feed_url,
             "created_at": record.created_at.isoformat() if record.created_at else None,
         }

@@ -1,4 +1,10 @@
-# Payments Service (Rust) — Hyperswitch Proxy
+# Payments Service (Rust) — Hyperswitch Proxy [DEPRECATED]
+
+> **DEPRECATED** — This Rust proxy is no longer used by Indus or the Merchant service.
+> Razorpay is now the sole PSP. Both services call Razorpay directly via
+> `indus/app/razorpay_client.py`. This directory is retained for git history only.
+>
+> Last used: before the Razorpay migration (2026-03).
 
 An optional high-throughput Rust HTTP proxy that centralises all Hyperswitch API calls. When deployed, both Indus and the Merchant service forward every payment request through this proxy instead of calling Hyperswitch directly — keeping payment credentials and retry logic in one place.
 
