@@ -36,6 +36,10 @@ def _model() -> str:
     return os.getenv("SARVAM_MODEL", SARVAM_DEFAULT_MODEL)
 
 
+def _api_key_header() -> str:
+    return os.getenv("SARVAM_API_KEY_HEADER", "api-subscription-key")
+
+
 def _timeout_seconds() -> float:
     return float(os.getenv("SARVAM_TIMEOUT_SECONDS", "20"))
 
@@ -58,7 +62,7 @@ class SarvamClient:
         max_retries = _max_retries()
         backoff_ms = _retry_backoff_ms()
         headers = {
-            "api-subscription-key": self.api_key,
+            _api_key_header(): self.api_key,
             "Content-Type": "application/json",
         }
         url = f"{self.base_url}{path}"
